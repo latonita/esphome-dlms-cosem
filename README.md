@@ -1,7 +1,7 @@
 # esphome-dlms-cosem
 Подключение EspHome к счетчикам электроэнергии по протоколу DLMS/COSEM/СПОДЭС (Энергомера CE207, CE307, CE308 и другие) по rs485. 
 
-Инструкции по подключению esp32/esp8266 к счётчику можно увидеть в соседнем на компоненте https://github.com/latonita/esphome-energomera-iec
+Инструкции по подключению esp32/esp8266 к счётчику можно увидеть в соседнем компоненте https://github.com/latonita/esphome-energomera-iec
 
 Версия нуль-нуль-нуль-первая. Супер-бета.
 
