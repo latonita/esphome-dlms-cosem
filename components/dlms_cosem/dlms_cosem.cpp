@@ -164,6 +164,8 @@ void DlmsCosemComponent::setup() {
   this->buffers_rr_.set_settings(&dlms_settings_);
   this->aarq_rr_.set_settings(&dlms_settings_);
   this->cosem_rr_.set_settings(&dlms_settings_);
+  this->session_release_rr_.set_settings(&dlms_settings_);
+  this->disconnect_rr_.set_settings(&dlms_settings_);
 
   BYTE_BUFFER_INIT(&this->buffers_.in);
 
@@ -281,6 +283,7 @@ void DlmsCosemComponent::loop() {
 
     case State::COMMS_RX: {
       this->log_state_();
+
       if (this->check_rx_timeout_()) {
         ESP_LOGE(TAG, "RX timeout.");
         current_rr_->set_error();
@@ -293,7 +296,6 @@ void DlmsCosemComponent::loop() {
           reading_state_.err_invalid_frames++;
           this->set_next_state_(reading_state_.next_state);
         }
-
         return;
       }
 
@@ -318,7 +320,7 @@ void DlmsCosemComponent::loop() {
 
       auto ret = dlms_getData2(&dlms_settings_, &buffers_.in, &buffers_.reply, 0);
       ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, this->dlms_error_to_string(ret),
-               buffers_.reply.complete);
+                buffers_.reply.complete);
 
       if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
         ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, this->dlms_error_to_string(ret));
@@ -329,7 +331,7 @@ void DlmsCosemComponent::loop() {
 
       if (buffers_.reply.complete == 0) {
         // data in multiple frames.
-        // we do not support it yet. never tested.
+        // never tested.
         // keep reading until full reply is received.
         return;
       }
@@ -509,12 +511,17 @@ void DlmsCosemComponent::loop() {
       this->log_state_();
       if (request_iter == this->sensors_.end()) {
         ESP_LOGD(TAG, "All requests done");
-        this->set_next_state_(State::CLOSE_SESSION);
+        this->set_next_state_(State::SESSION_RELEASE);
         break;
       } else {
         auto req = request_iter->first;
+        auto sens = request_iter->second;
+
         ESP_LOGD(TAG, "Requesting data for '%s'", req.c_str());
-        cosem_rr_.set_logical_name(req.c_str());
+        cosem_rr_.set_logical_name(req.c_str(), sens->get_type() == SensorType::TEXT_SENSOR
+                                                    ? DLMS_OBJECT_TYPE_DATA
+                                                    : DLMS_OBJECT_TYPE_REGISTER);
+
         this->start_comms_and_next(&cosem_rr_, State::DATA_RECV);
       }
       break;
@@ -553,17 +560,53 @@ void DlmsCosemComponent::loop() {
 #ifdef USE_TEXT_SENSOR
           if (sensor->get_type() == SensorType::TEXT_SENSOR) {
             ESP_LOGW(TAG, "TEXT_SENSOR not implemented yet");
-            // static gxByteBuffer text_buffer;
-            // bb_capacity(&text_buffer, 128);
-            // BYTE_BUFFER_INIT(&text_buffer);
-            // if (DLMS_ERROR_CODE_OK == var_toString(&cosem_rr_.data_.value, &text_buffer)) {
-            //   const char *text = (const char *) text_buffer.data;
-            //   static_cast<DlmsCosemTextSensor *>(sensor)->set_value(text);
-            // }
-            // bb_clear(&text_buffer);
+            static gxByteBuffer text_buffer;
+            BYTE_BUFFER_INIT(&text_buffer);
+            auto ret = var_toString(&cosem_rr_.data_.value, &text_buffer);
+            ESP_LOGD(TAG, "var_toString ret = %d, text_buffer->size = %d", ret, text_buffer.size);
+            if (DLMS_ERROR_CODE_OK == ret) {
+              char str_buffer[128] = {'\0'};
+
+              if (text_buffer.data && text_buffer.size < 128) {
+                memcpy(str_buffer, text_buffer.data, text_buffer.size);
+                str_buffer[text_buffer.size] = '\0';
+                ESP_LOGD(TAG, "OBIS code: %s, Value: %s", req.c_str(), str_buffer);
+
+                // str_buffer contain hex string, convert to ascii
+                //  example: 456E6572676F6D657261000000000000 -> "Energomera"
+                for (int i = 0; i < 42; i++) {
+                  uint8_t upper_char = str_buffer[i * 3];
+                  uint8_t lower_char = str_buffer[i * 3 + 1];
+                  if (upper_char >= '0' && upper_char <= '9') {
+                    upper_char = upper_char - '0';
+                  } else if (upper_char >= 'A' && upper_char <= 'F') {
+                    upper_char = upper_char - 'A' + 10;
+                  } else {
+                    ESP_LOGE(TAG, "OBIS code: %s, Invalid hex char: %c", req.c_str(), upper_char);
+                    str_buffer[i] = ' ';
+                    break;
+                  }
+                  if (lower_char >= '0' && lower_char <= '9') {
+                    lower_char = lower_char - '0';
+                  } else if (lower_char >= 'A' && lower_char <= 'F') {
+                    lower_char = lower_char - 'A' + 10;
+                  } else {
+                    ESP_LOGE(TAG, "OBIS code: %s, Invalid hex char: %c", req.c_str(), lower_char);
+                    str_buffer[i] = ' ';
+                    break;
+                  }
+                  str_buffer[i] = upper_char << 4 | lower_char;
+                }
+                str_buffer[64] = '\0';
+
+                static_cast<DlmsCosemTextSensor *>(sensor)->set_value(str_buffer);
+              } else {
+                ESP_LOGE(TAG, "OBIS code: %s, Value too long", req.c_str());
+              }
+            }
+            bb_clear(&text_buffer);
           }
 #endif
-
         } else {
           ESP_LOGD(TAG, "OBIS code: %s, result != DLMS_ERROR_CODE_OK = %d", req.c_str(), cosem_rr_.result());
         }
@@ -624,20 +667,31 @@ void DlmsCosemComponent::loop() {
       if (request_iter != this->sensors_.end()) {
         this->set_next_state_delayed_(this->delay_between_requests_ms_, State::DATA_ENQ);
       } else {
-        this->set_next_state_delayed_(this->delay_between_requests_ms_, State::CLOSE_SESSION);
+        this->set_next_state_delayed_(this->delay_between_requests_ms_, State::SESSION_RELEASE);
       }
       break;
 
-    case State::CLOSE_SESSION:
-      this->log_state_();
-      ESP_LOGD(TAG, "Closing session");
-      //      this->send_frame_(CMD_CLOSE_SESSION, sizeof(CMD_CLOSE_SESSION));
-      this->set_next_state_(State::PUBLISH);
-      ESP_LOGD(TAG, "Total connection time: %u ms", millis() - session_started_ms);
+    case State::SESSION_RELEASE:
       sensor_iter = this->sensors_.begin();
+      this->log_state_();
+      if (this->auth_required_) {
+        ESP_LOGD(TAG, "Session release");
+        this->start_comms_and_next(&session_release_rr_, State::DISCONNECT_REQ);
+      } else {
+        this->set_next_state_(State::DISCONNECT_REQ);
+      }
+
       break;
 
+    case State::DISCONNECT_REQ:
+      this->log_state_();
+      ESP_LOGD(TAG, "Disconnect request");
+      this->start_comms_and_next(&disconnect_rr_, State::PUBLISH);
+
+      // break;
+
     case State::PUBLISH:
+      ESP_LOGD(TAG, "Total connection time: %u ms", millis() - session_started_ms);
       this->log_state_();
       ESP_LOGD(TAG, "Publishing data");
       this->update_last_rx_time_();
@@ -791,7 +845,7 @@ void DlmsCosemComponent::InOutBuffers::check_and_grow_input(uint16_t more_data) 
 }
 
 void DlmsCosemComponent::start_comms_and_next(RequestResponse *rr, State next_state, bool mission_critical) {
-  //ESP_LOGVV(TAG, "start_comms_and_next: %s", state_to_string(next_state));
+  // ESP_LOGVV(TAG, "start_comms_and_next: %s", state_to_string(next_state));
   reading_state_.next_state = next_state;
 
   current_rr_ = rr;
@@ -915,9 +969,9 @@ void DlmsCosemComponent::send_dlms_messages_() {
   if (buffers_.out_msg_data_pos >= buffer->size) {
     buffers_.out_msg_index++;
   }
-  if (buffers_.out_msg_index >= buffers_.out_msg.size) {
-    ESP_LOGV(TAG, "communicate: message sent");
-  }
+  // if (buffers_.out_msg_index >= buffers_.out_msg.size) {
+  //   ESP_LOGV(TAG, "communicate: message sent");
+  // }
 }
 
 size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
@@ -947,7 +1001,7 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
 
     if (stop_fn(this->buffers_.in.data, this->buffers_.in.size)) {
       ESP_LOGVV(TAG, "RX: %s", format_frame_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
-      ESP_LOGVV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
+      ESP_LOGV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ret_val = this->buffers_.in.size;
       // this->buffers_.amount_in = 0;
       this->update_last_rx_time_();
@@ -1030,8 +1084,10 @@ const char *DlmsCosemComponent::state_to_string(State state) {
       return "DATA_RECV";
     case State::DATA_NEXT:
       return "DATA_NEXT";
-    case State::CLOSE_SESSION:
-      return "CLOSE_SESSION";
+    case State::SESSION_RELEASE:
+      return "SESSION_RELEASE";
+    case State::DISCONNECT_REQ:
+      return "DISCONNECT_REQ";
     case State::PUBLISH:
       return "PUBLISH";
     default:

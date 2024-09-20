@@ -135,8 +135,8 @@ class AarqReqResp : public RequestResponse {
 
 class CosemReqResp : public RequestResponse {
  public:
-  void set_logical_name(const char *logicname) {
-    int ret = cosem_init(BASE(data_), DLMS_OBJECT_TYPE_REGISTER, logicname);
+  void set_logical_name(const char *logicname, DLMS_OBJECT_TYPE type = DLMS_OBJECT_TYPE_REGISTER) {
+    int ret = cosem_init(BASE(data_), type, logicname);
     if (ret != 0)
       ESP_LOGE(TAG, "cosem_init ERROR %d", ret);
 
@@ -168,6 +168,34 @@ class CosemReqResp : public RequestResponse {
   unsigned char attribute_{2};
   int value_{0};
   float value_float_{0.0f};
+};
+
+class SessionReleaseReqResp : public RequestResponse {
+ public:
+  void prepare_messages(message *messages) override {
+    int ret = cl_releaseRequest(this->settings_, messages);
+    if (ret != 0)
+      ESP_LOGE(TAG, "cl_releaseRequest ERROR %d", ret);
+  }
+
+  int parse(gxReplyData *reply) override {
+    this->result_ = DLMS_ERROR_CODE_OK;
+    return DLMS_ERROR_CODE_OK;
+  }
+};
+
+class DisconnectReqResp : public RequestResponse {
+ public:
+  void prepare_messages(message *messages) override {
+    int ret = cl_disconnectRequest(this->settings_, messages);
+    if (ret != 0)
+      ESP_LOGE(TAG, "cl_disconnectRequest ERROR %d", ret);
+  }
+
+  int parse(gxReplyData *reply) override {
+    this->result_ = DLMS_ERROR_CODE_OK;
+    return DLMS_ERROR_CODE_OK;
+  }
 };
 
 class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
@@ -230,7 +258,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     DATA_ENQ,
     DATA_RECV,
     DATA_NEXT,
-    CLOSE_SESSION,
+    SESSION_RELEASE,
+    DISCONNECT_REQ,
     PUBLISH,
   } state_{State::NOT_INITIALIZED};
 
@@ -298,6 +327,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   BuffersReqResp buffers_rr_;
   AarqReqResp aarq_rr_;
   CosemReqResp cosem_rr_;
+  SessionReleaseReqResp session_release_rr_;
+  DisconnectReqResp disconnect_rr_;
 
   RequestResponse *current_rr_{nullptr};
 
