@@ -36,50 +36,8 @@ using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
 using FrameStopFunction = std::function<bool(uint8_t *buf, size_t size)>;
 using ReadFunction = std::function<size_t()>;
 
-// class FrameReceiver : public uart::UARTDevice {
-//  public:
-//   FrameReceiver() {
-//     BYTE_BUFFER_INIT(&rbuffer_);
-//     bb_capacity(&rbuffer_, 128);
-//     mes_init(&messages_);
-//     reply_init(&reply_);
-//     resetcomm();
-//   }
-
-//   void increase_rbuffer(int more) {
-//     if (rbuffer_.size + more > rbuffer_.capacity) {
-//       bb_capacity(&rbuffer_, 20 + rbuffer_.size + more);
-//     }
-//   }
-
-//   void resetcomm() {
-//     mes_clear(&messages_);
-//     reply_clear(&reply_);
-
-//     mindex_ = 0;
-//     mdatapos_ = 0;
-//     eop_found_ = false;
-
-//     rbuffer_.size = 0;
-//     rbuffer_.position = 0;
-//   }
-
-//   ~FrameReceiver() {
-//     bb_clear(&rbuffer_);
-//     mes_clear(&messages_);
-//     reply_clear(&reply_);
-//   }
-
-//  public:
-//   // protected:
-//   gxByteBuffer rbuffer_;
-//   message messages_;
-//   gxReplyData reply_;
-//   int mindex_;
-//   int mdatapos_;
-//   bool eop_found_;
-//   //  int timeout_;
-// };
+using DlmsRequestGenerator = std::function<int(message&)>;
+using DlmsResponseParser = std::function<int(gxReplyData *)>;
 
 class RequestResponse {
  public:
@@ -276,8 +234,11 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
   void start_comms_and_next(RequestResponse *rr, State next_state, bool mission_critical = false);
 
-  void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
-                                     bool check_crc);
+  void send_dlms_req_and_next(DlmsRequestGenerator generator, DlmsResponseParser parser, State next_state,
+                              bool mission_critical = false);
+
+  // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
+  //                                    bool check_crc);
   struct {
     ReadFunction read_fn;
     State next_state;
@@ -290,6 +251,14 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   } reading_state_{nullptr, State::IDLE, false, false, 0, 0, 0, 0};
   size_t received_frame_size_{0};
   bool received_complete_reply_{false};
+
+  struct {
+    DlmsRequestGenerator request_fn;
+    DlmsResponseParser parser_fn;
+    State next_state;
+    bool mission_critical;
+    bool reply_is_complete;
+  } dlms_reading_state_{nullptr, nullptr, State::IDLE, false, false};
 
   uint32_t baud_rate_handshake_{9600};
   uint32_t baud_rate_{9600};
@@ -325,6 +294,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   dlmsSettings dlms_settings_;
 
   BuffersReqResp buffers_rr_;
+
   AarqReqResp aarq_rr_;
   CosemReqResp cosem_rr_;
   SessionReleaseReqResp session_release_rr_;

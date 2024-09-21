@@ -67,7 +67,7 @@ static constexpr uint8_t HDLC_FLAG = 0x7E;
 static const uint8_t CMD_ACK_SET_BAUD_AND_MODE[] = {ACK, '0', '5', '1', CR, LF};
 static const uint8_t CMD_CLOSE_SESSION[] = {SOH, 0x42, 0x30, ETX, 0x75};
 
-static constexpr uint8_t BOOT_WAIT_S = 10;
+static constexpr uint8_t BOOT_WAIT_S = 180;  // 10;
 
 static char empty_str[] = "";
 
@@ -516,8 +516,8 @@ void DlmsCosemComponent::loop() {
       } else {
         auto req = request_iter->first;
         auto sens = request_iter->second;
-
-        ESP_LOGD(TAG, "Requesting data for '%s'", req.c_str());
+        // auto nm = sens->get_base()->get_name();
+        // ESP_LOGD(TAG, "Requesting data for '%s', obis '%s'", nm.c_str(), req.c_str());
         cosem_rr_.set_logical_name(req.c_str(), sens->get_type() == SensorType::TEXT_SENSOR
                                                     ? DLMS_OBJECT_TYPE_DATA
                                                     : DLMS_OBJECT_TYPE_REGISTER);
@@ -534,7 +534,6 @@ void DlmsCosemComponent::loop() {
       auto sensor = request_iter->second;
 
       if (buffers_.reply.complete) {
-        ESP_LOGD(TAG, "communicate: reply is complete");
         auto vt = buffers_.reply.dataType;
         ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", req.c_str(), this->dlms_data_type_to_string(vt), vt);
       }
@@ -560,51 +559,18 @@ void DlmsCosemComponent::loop() {
 #ifdef USE_TEXT_SENSOR
           if (sensor->get_type() == SensorType::TEXT_SENSOR) {
             ESP_LOGW(TAG, "TEXT_SENSOR not implemented yet");
-            static gxByteBuffer text_buffer;
-            BYTE_BUFFER_INIT(&text_buffer);
-            auto ret = var_toString(&cosem_rr_.data_.value, &text_buffer);
-            ESP_LOGD(TAG, "var_toString ret = %d, text_buffer->size = %d", ret, text_buffer.size);
-            if (DLMS_ERROR_CODE_OK == ret) {
-              char str_buffer[128] = {'\0'};
 
-              if (text_buffer.data && text_buffer.size < 128) {
-                memcpy(str_buffer, text_buffer.data, text_buffer.size);
-                str_buffer[text_buffer.size] = '\0';
-                ESP_LOGD(TAG, "OBIS code: %s, Value: %s", req.c_str(), str_buffer);
+            if (cosem_rr_.data_.value.byteArr && cosem_rr_.data_.value.byteArr->size > 0) {
+              auto arr = cosem_rr_.data_.value.byteArr;
 
-                // str_buffer contain hex string, convert to ascii
-                //  example: 456E6572676F6D657261000000000000 -> "Energomera"
-                for (int i = 0; i < 42; i++) {
-                  uint8_t upper_char = str_buffer[i * 3];
-                  uint8_t lower_char = str_buffer[i * 3 + 1];
-                  if (upper_char >= '0' && upper_char <= '9') {
-                    upper_char = upper_char - '0';
-                  } else if (upper_char >= 'A' && upper_char <= 'F') {
-                    upper_char = upper_char - 'A' + 10;
-                  } else {
-                    ESP_LOGE(TAG, "OBIS code: %s, Invalid hex char: %c", req.c_str(), upper_char);
-                    str_buffer[i] = ' ';
-                    break;
-                  }
-                  if (lower_char >= '0' && lower_char <= '9') {
-                    lower_char = lower_char - '0';
-                  } else if (lower_char >= 'A' && lower_char <= 'F') {
-                    lower_char = lower_char - 'A' + 10;
-                  } else {
-                    ESP_LOGE(TAG, "OBIS code: %s, Invalid hex char: %c", req.c_str(), lower_char);
-                    str_buffer[i] = ' ';
-                    break;
-                  }
-                  str_buffer[i] = upper_char << 4 | lower_char;
-                }
-                str_buffer[64] = '\0';
-
-                static_cast<DlmsCosemTextSensor *>(sensor)->set_value(str_buffer);
-              } else {
-                ESP_LOGE(TAG, "OBIS code: %s, Value too long", req.c_str());
+              ESP_LOGV(TAG, "data size=%d", arr->size);
+              bb_setInt8(arr, 0);     // add null-termination
+              if (arr->size > 128) {  // clip the string
+                ESP_LOGW(TAG, "String is too long, clipping to 128 bytes");
+                arr->data[127] = '\0';
               }
+              static_cast<DlmsCosemTextSensor *>(sensor)->set_value(reinterpret_cast<const char *>(arr->data));
             }
-            bb_clear(&text_buffer);
           }
 #endif
         } else {
@@ -674,24 +640,23 @@ void DlmsCosemComponent::loop() {
     case State::SESSION_RELEASE:
       sensor_iter = this->sensors_.begin();
       this->log_state_();
-      if (this->auth_required_) {
-        ESP_LOGD(TAG, "Session release");
-        this->start_comms_and_next(&session_release_rr_, State::DISCONNECT_REQ);
-      } else {
-        this->set_next_state_(State::DISCONNECT_REQ);
-      }
+      // if (this->auth_required_) {
+      //   ESP_LOGD(TAG, "Session release");
+      //   this->start_comms_and_next(&session_release_rr_, State::DISCONNECT_REQ);
+      // } else {
+      this->set_next_state_(State::DISCONNECT_REQ);
+      // }
 
       break;
 
     case State::DISCONNECT_REQ:
       this->log_state_();
       ESP_LOGD(TAG, "Disconnect request");
-      this->start_comms_and_next(&disconnect_rr_, State::PUBLISH);
-
-      // break;
+      // this->start_comms_and_next(&disconnect_rr_, State::PUBLISH);
+      this->set_next_state_(State::PUBLISH);
+      break;
 
     case State::PUBLISH:
-      ESP_LOGD(TAG, "Total connection time: %u ms", millis() - session_started_ms);
       this->log_state_();
       ESP_LOGD(TAG, "Publishing data");
       this->update_last_rx_time_();
@@ -706,6 +671,7 @@ void DlmsCosemComponent::loop() {
         }
         this->report_failure(false);
         this->set_next_state_(State::IDLE);
+        ESP_LOGD(TAG, "Total time: %u ms", millis() - session_started_ms);
       }
       break;
 
@@ -872,6 +838,22 @@ void DlmsCosemComponent::start_comms_and_next(RequestResponse *rr, State next_st
 
   set_next_state_(State::COMMS_TX);
 }
+
+void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestGenerator generator, DlmsResponseParser parser,
+                                                State next_state, bool mission_critical) {
+  dlms_reading_state_.request_fn = generator;
+  dlms_reading_state_.parser_fn = parser;
+  dlms_reading_state_.next_state = next_state;
+  dlms_reading_state_.mission_critical = mission_critical;
+  dlms_reading_state_.reply_is_complete = false;
+  buffers_.reset();
+  int ret = DLMS_ERROR_CODE_OK;
+  if (generator != nullptr) {
+    ret = generator(buffers_.out_msg);
+  }
+
+}
+
 // void DlmsCosemComponent::read_reply_and_go_next_state_(ReadFunction read_fn,
 // State next_state, uint8_t retries,
 //                                                        bool mission_critical,
@@ -961,7 +943,7 @@ void DlmsCosemComponent::send_dlms_messages_() {
       this->flow_control_pin_->digital_write(false);
 
     ESP_LOGVV(TAG, "TX: %s", format_frame_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
-    ESP_LOGVV(TAG, "TX: %s", format_hex_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
+    ESP_LOGV(TAG, "TX: %s", format_hex_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
 
     this->update_last_rx_time_();
     buffers_.out_msg_data_pos += bytes_to_send;

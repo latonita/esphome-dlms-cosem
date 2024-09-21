@@ -17,9 +17,11 @@ class DlmsCosemSensorBase {
   static const uint8_t MAX_REQUEST_SIZE = 15;
 
   virtual SensorType get_type() const = 0;
+  //  virtual const c &get_sensor_name() const { return ""; };
+  virtual EntityBase *get_base() = 0;
   virtual void publish() = 0;
 
-  void set_obis_code(const char *obis_code) { obis_code_ = obis_code; };
+  void set_obis_code(const char *obis_code) { obis_code_ = obis_code; }
   const std::string &get_obis_code() const { return this->obis_code_; }
 
   void reset() {
@@ -47,6 +49,8 @@ class DlmsCosemSensorBase {
 class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
  public:
   SensorType get_type() const override { return SENSOR; }
+  //  const StringRef &get_sensor_name() { this->get_name(); }
+  EntityBase *get_base() { return this;}
   void publish() override { publish_state(value_); }
 
   void set_multiplier(float multiplier) { multiplier_ = multiplier; }
@@ -66,10 +70,12 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
 class DlmsCosemTextSensor : public DlmsCosemSensorBase, public text_sensor::TextSensor {
  public:
   SensorType get_type() const override { return TEXT_SENSOR; }
+  //  const StringRef &get_sensor_name() const { return get_name(); }
+  EntityBase *get_base() { return this;}
   void publish() override { publish_state(value_); }
 
   void set_value(const char *value) {
-    value_ = value;
+    value_ = std::string(value);
     has_value_ = true;
     tries_ = 0;
   }
