@@ -36,8 +36,8 @@ using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
 using FrameStopFunction = std::function<bool(uint8_t *buf, size_t size)>;
 using ReadFunction = std::function<size_t()>;
 
-using DlmsRequestGenerator = std::function<int(message&)>;
-using DlmsResponseParser = std::function<int(gxReplyData *)>;
+using DlmsRequestMaker = std::function<int()>;
+using DlmsResponseParser = std::function<int()>;
 
 class RequestResponse {
  public:
@@ -233,9 +233,18 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void set_next_state_delayed_(uint32_t ms, State next_state);
 
   void start_comms_and_next(RequestResponse *rr, State next_state, bool mission_critical = false);
-
-  void send_dlms_req_and_next(DlmsRequestGenerator generator, DlmsResponseParser parser, State next_state,
+  
+  void prepare_and_send_dlms_buffers();
+  void prepare_and_send_dlms_aarq();
+  void prepare_and_send_dlms_auth();
+  void prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type);
+  void prepare_and_send_dlms_release();
+  void prepare_and_send_dlms_disconnect();
+  
+  void send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
                               bool mission_critical = false);
+  
+  int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
 
   // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
   //                                    bool check_crc);
@@ -253,12 +262,13 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   bool received_complete_reply_{false};
 
   struct {
-    DlmsRequestGenerator request_fn;
+    DlmsRequestMaker maker_fn;
     DlmsResponseParser parser_fn;
     State next_state;
     bool mission_critical;
     bool reply_is_complete;
-  } dlms_reading_state_{nullptr, nullptr, State::IDLE, false, false};
+    int last_error;
+  } dlms_reading_state_{nullptr, nullptr, State::IDLE, false, false, DLMS_ERROR_CODE_OK};
 
   uint32_t baud_rate_handshake_{9600};
   uint32_t baud_rate_{9600};
@@ -285,6 +295,9 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     void check_and_grow_input(uint16_t more_data);
     // next function shows whether there are still messages to send
     const bool has_more_messages_to_send() const { return out_msg_index < out_msg.size; }
+    
+    gxRegister gx_register;
+    unsigned char gx_attribute{2};
 
   } buffers_;
 

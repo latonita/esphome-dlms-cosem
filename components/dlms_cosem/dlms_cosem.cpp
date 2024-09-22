@@ -324,7 +324,7 @@ void DlmsCosemComponent::loop() {
 
       if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
         ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, this->dlms_error_to_string(ret));
-        current_rr_->set_error();
+        // current_rr_->set_error();
         this->set_next_state_(reading_state_.next_state);
         return;
       }
@@ -340,19 +340,27 @@ void DlmsCosemComponent::loop() {
       this->update_last_rx_time_();
       this->set_next_state_(reading_state_.next_state);
 
-      current_rr_->parse(&buffers_.reply);
-
-      if (current_rr_->result().has_value()) {
-        ESP_LOGD(TAG, "In result has value");
-        if (*current_rr_->result() == DLMS_ERROR_CODE_OK) {
-          ESP_LOGD(TAG, "In result == DLMS_ERROR_CODE_OK");
-        } else {
-          ESP_LOGE(TAG, "Error in state %s", this->state_to_string(state_));
-          state_ = State::IDLE;
-        }
+      // current_rr_->parse(&buffers_.reply);
+      auto parse_ret = this->dlms_reading_state_.parser_fn();
+      this->dlms_reading_state_.last_error = parse_ret;
+      
+      if (parse_ret == DLMS_ERROR_CODE_OK) {
+        ESP_LOGD(TAG, "In result == DLMS_ERROR_CODE_OK");
       } else {
-        ESP_LOGD(TAG, "No result");
+        ESP_LOGE(TAG, "Error in state %s", this->state_to_string(state_));
+        set_next_state_(State::IDLE);
       }
+      // if (current_rr_->result().has_value()) {
+      //   ESP_LOGD(TAG, "In result has value");
+      //   if (*current_rr_->result() == DLMS_ERROR_CODE_OK) {
+      //     ESP_LOGD(TAG, "In result == DLMS_ERROR_CODE_OK");
+      //   } else {
+      //     ESP_LOGE(TAG, "Error in state %s", this->state_to_string(state_));
+      //     state_ = State::IDLE;
+      //   }
+      // } else {
+      //   ESP_LOGD(TAG, "No result");
+      // }
     } break;
 
       // case State::WAITING_FOR_RESPONSE: {
@@ -455,7 +463,9 @@ void DlmsCosemComponent::loop() {
 
     case State::BUFFERS_REQ: {
       this->log_state_();
-      this->start_comms_and_next(&buffers_rr_, State::BUFFERS_RCV);
+      this->prepare_and_send_dlms_buffers();
+      // this->start_comms_and_next(&buffers_rr_, State::BUFFERS_RCV);
+
     } break;
 
     case State::BUFFERS_RCV: {
@@ -468,7 +478,8 @@ void DlmsCosemComponent::loop() {
 
     case State::ASSOCIATION_REQ: {
       this->log_state_();
-      this->start_comms_and_next(&aarq_rr_, State::ASSOCIATION_RCV);
+      // this->start_comms_and_next(&aarq_rr_, State::ASSOCIATION_RCV);
+      this->prepare_and_send_dlms_aarq();
     } break;
 
     case State::ASSOCIATION_RCV: {
@@ -516,13 +527,9 @@ void DlmsCosemComponent::loop() {
       } else {
         auto req = request_iter->first;
         auto sens = request_iter->second;
-        // auto nm = sens->get_base()->get_name();
-        // ESP_LOGD(TAG, "Requesting data for '%s', obis '%s'", nm.c_str(), req.c_str());
-        cosem_rr_.set_logical_name(req.c_str(), sens->get_type() == SensorType::TEXT_SENSOR
-                                                    ? DLMS_OBJECT_TYPE_DATA
-                                                    : DLMS_OBJECT_TYPE_REGISTER);
-
-        this->start_comms_and_next(&cosem_rr_, State::DATA_RECV);
+        auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
+        // this->prepare_and_send_dlms_request(req.c_str(), type, State::DATA_RECV);
+        this->prepare_and_send_dlms_data_request(req.c_str(), type);
       }
       break;
 
@@ -533,98 +540,12 @@ void DlmsCosemComponent::loop() {
       auto req = request_iter->first;
       auto sensor = request_iter->second;
 
-      if (buffers_.reply.complete) {
-        auto vt = buffers_.reply.dataType;
-        ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", req.c_str(), this->dlms_data_type_to_string(vt), vt);
-      }
+      auto ret = this->set_sensor_value(sensor, req.c_str());
 
-      if (cosem_rr_.result().has_value()) {
-        if (cosem_rr_.result() == DLMS_ERROR_CODE_OK) {
-          // result is okay, value shall be there
-          auto vt = buffers_.reply.dataType;
-
-          if (sensor->get_type() == SensorType::SENSOR) {
-            //
-            if (vt == DLMS_DATA_TYPE_FLOAT32 || vt == DLMS_DATA_TYPE_FLOAT64) {
-              float val = cosem_rr_.value_float();
-              ESP_LOGD(TAG, "OBIS code: %s, Value: %f", req.c_str(), val);
-              static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
-            } else {
-              int val = cosem_rr_.value();
-              ESP_LOGD(TAG, "OBIS code: %s, Value: %d", req.c_str(), val);
-              static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
-            }
-          }
-
-#ifdef USE_TEXT_SENSOR
-          if (sensor->get_type() == SensorType::TEXT_SENSOR) {
-            ESP_LOGW(TAG, "TEXT_SENSOR not implemented yet");
-
-            if (cosem_rr_.data_.value.byteArr && cosem_rr_.data_.value.byteArr->size > 0) {
-              auto arr = cosem_rr_.data_.value.byteArr;
-
-              ESP_LOGV(TAG, "data size=%d", arr->size);
-              bb_setInt8(arr, 0);     // add null-termination
-              if (arr->size > 128) {  // clip the string
-                ESP_LOGW(TAG, "String is too long, clipping to 128 bytes");
-                arr->data[127] = '\0';
-              }
-              static_cast<DlmsCosemTextSensor *>(sensor)->set_value(reinterpret_cast<const char *>(arr->data));
-            }
-          }
-#endif
-        } else {
-          ESP_LOGD(TAG, "OBIS code: %s, result != DLMS_ERROR_CODE_OK = %d", req.c_str(), cosem_rr_.result());
-        }
-      } else {
-        ESP_LOGD(TAG, "OBIS code: %s, no result", req.c_str());
-      }
-      this->set_next_state_(State::DATA_NEXT);
-
-      // if (received_frame_size_ == 0) {
-      //   ESP_LOGD(TAG, "Response not received or corrupted. Next.");
-      //   this->update_last_rx_time_();
-      //   this->clear_rx_buffers_();
-      //   return;
+      // } else {
+      //   ESP_LOGD(TAG, "OBIS code: %s, no result", req.c_str());
       // }
 
-      // auto req = request_iter->first;
-
-      // uint8_t brackets_found = get_values_from_brackets_(in_param_ptr, vals);
-      // if (!brackets_found) {
-      //   ESP_LOGE(TAG, "Invalid frame format: '%s'", in_param_ptr);
-      //   this->stats_.invalid_frames_++;
-      //   return;
-      // }
-
-      // ESP_LOGD(TAG,
-      //          "Received name: '%s', values: %d, idx: 1(%s), 2(%s), 3(%s),
-      //          4(%s), 5(%s), 6(%s), 7(%s), 8(%s), 9(%s), " "10(%s), 11(%s),
-      //          12(%s)", in_param_ptr, brackets_found, vals[0], vals[1],
-      //          vals[2], vals[3], vals[4], vals[5], vals[6], vals[7], vals[8],
-      //          vals[9], vals[10], vals[11]);
-
-      // if (in_param_ptr[0] == '\0') {
-      //   if (vals[0][0] == 'E' && vals[0][1] == 'R' && vals[0][2] == 'R') {
-      //     ESP_LOGE(TAG, "Request '%s' either not supported or malformed. Error
-      //     code %s", in_param_ptr, vals[0]);
-      //   } else {
-      //     ESP_LOGE(TAG, "Request '%s' either not supported or malformed.",
-      //     in_param_ptr);
-      //   }
-      //   return;
-      // }
-
-      // if (request_iter->second->get_function() != in_param_ptr) {
-      //   ESP_LOGE(TAG, "Returned data name mismatch. Skipping frame");
-      //   return;
-      // }
-
-      // auto range = sensors_.equal_range(req);
-      // for (auto it = range.first; it != range.second; ++it) {
-      //   if (!it->second->is_failed())
-      //     set_sensor_value_(it->second, vals);
-      // }
     } break;
 
     case State::DATA_NEXT:
@@ -644,7 +565,8 @@ void DlmsCosemComponent::loop() {
       //   ESP_LOGD(TAG, "Session release");
       //   this->start_comms_and_next(&session_release_rr_, State::DISCONNECT_REQ);
       // } else {
-      this->set_next_state_(State::DISCONNECT_REQ);
+      // this->set_next_state_(State::DISCONNECT_REQ);
+      this->prepare_and_send_dlms_release();
       // }
 
       break;
@@ -653,7 +575,8 @@ void DlmsCosemComponent::loop() {
       this->log_state_();
       ESP_LOGD(TAG, "Disconnect request");
       // this->start_comms_and_next(&disconnect_rr_, State::PUBLISH);
-      this->set_next_state_(State::PUBLISH);
+      // this->set_next_state_(State::PUBLISH);
+      this->prepare_and_send_dlms_disconnect();
       break;
 
     case State::PUBLISH:
@@ -839,19 +762,122 @@ void DlmsCosemComponent::start_comms_and_next(RequestResponse *rr, State next_st
   set_next_state_(State::COMMS_TX);
 }
 
-void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestGenerator generator, DlmsResponseParser parser,
-                                                State next_state, bool mission_critical) {
-  dlms_reading_state_.request_fn = generator;
+void DlmsCosemComponent::prepare_and_send_dlms_buffers() {
+  auto make = [this]() { return cl_snrmRequest(&this->dlms_settings_, &this->buffers_.out_msg); };
+  auto parse = [this]() { return cl_parseUAResponse(&this->dlms_settings_, &this->buffers_.reply.data); };
+  this->send_dlms_req_and_next(make, parse, State::BUFFERS_RCV);
+}
+
+void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
+  auto make = [this]() { return cl_aarqRequest(&this->dlms_settings_, &this->buffers_.out_msg); };
+  auto parse = [this]() { return cl_parseAAREResponse(&this->dlms_settings_, &this->buffers_.reply.data); };
+  this->send_dlms_req_and_next(make, parse, State::ASSOCIATION_RCV);
+}
+
+void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type) {
+  auto ret = cosem_init(BASE(this->buffers_.gx_register), type, obis);
+  if (ret != DLMS_ERROR_CODE_OK) {
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
+    this->set_next_state_(State::DATA_NEXT);
+    return;
+  }
+
+  auto make = [this]() {
+    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                   &this->buffers_.out_msg);
+  };
+  auto parse = [this]() {
+    return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                          &this->buffers_.reply.dataValue);
+  };
+  this->send_dlms_req_and_next(make, parse, State::DATA_RECV);
+}
+
+void DlmsCosemComponent::prepare_and_send_dlms_release() {
+  auto make = [this]() { return cl_releaseRequest(&this->dlms_settings_, &this->buffers_.out_msg); };
+  auto parse = []() { return DLMS_ERROR_CODE_OK; };
+  this->send_dlms_req_and_next(make, parse, State::DISCONNECT_REQ);
+}
+
+void DlmsCosemComponent::prepare_and_send_dlms_disconnect() {
+  auto make = [this]() { return cl_disconnectRequest(&this->dlms_settings_, &this->buffers_.out_msg); };
+  auto parse = []() { return DLMS_ERROR_CODE_OK; };
+  this->send_dlms_req_and_next(make, parse, State::PUBLISH);
+}
+
+void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
+                                                bool mission_critical) {
+  dlms_reading_state_.maker_fn = maker;
   dlms_reading_state_.parser_fn = parser;
   dlms_reading_state_.next_state = next_state;
   dlms_reading_state_.mission_critical = mission_critical;
   dlms_reading_state_.reply_is_complete = false;
   buffers_.reset();
   int ret = DLMS_ERROR_CODE_OK;
-  if (generator != nullptr) {
-    ret = generator(buffers_.out_msg);
+  if (maker != nullptr) {
+    ret = maker();
   }
 
+  reading_state_ = {};
+  //  reading_state_.read_fn = read_fn;
+  reading_state_.mission_critical = mission_critical;
+  reading_state_.tries_max = 1;  // retries;
+  reading_state_.tries_counter = 0;
+  //  reading_state_.check_crc = check_crc;
+  reading_state_.next_state = next_state;
+  received_frame_size_ = 0;
+
+  received_complete_reply_ = false;
+
+  set_next_state_(State::COMMS_TX);
+}
+
+int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis) {
+  if (buffers_.reply.complete) {
+    auto vt = buffers_.reply.dataType;
+    ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
+  }
+
+  //      if (cosem_rr_.result().has_value()) {
+  if (this->dlms_reading_state_.last_error == DLMS_ERROR_CODE_OK) {
+    // result is okay, value shall be there
+    auto vt = buffers_.reply.dataType;
+    auto var = &this->buffers_.gx_register.value;
+
+    if (sensor->get_type() == SensorType::SENSOR) {
+      //
+      if (vt == DLMS_DATA_TYPE_FLOAT32 || vt == DLMS_DATA_TYPE_FLOAT64) {
+        float val = var_toDouble(var);
+        ESP_LOGD(TAG, "OBIS code: %s, Value: %f", obis, val);
+        static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
+      } else {
+        int val = var_toInteger(var);
+        ESP_LOGD(TAG, "OBIS code: %s, Value: %d", obis, val);
+        static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
+      }
+    }
+
+#ifdef USE_TEXT_SENSOR
+    if (sensor->get_type() == SensorType::TEXT_SENSOR) {
+      auto var = &this->buffers_.gx_register.value;
+      if (var && var->byteArr && var->byteArr->size > 0) {
+        //auto arr = cosem_rr_.data_.value.byteArr;
+        auto arr = var->byteArr;
+
+        ESP_LOGV(TAG, "data size=%d", arr->size);
+        bb_setInt8(arr, 0);     // add null-termination
+        if (arr->size > 128) {  // clip the string
+          ESP_LOGW(TAG, "String is too long, clipping to 128 bytes");
+          arr->data[127] = '\0';
+        }
+        static_cast<DlmsCosemTextSensor *>(sensor)->set_value(reinterpret_cast<const char *>(arr->data));
+      }
+    }
+#endif
+  } else {
+    ESP_LOGD(TAG, "OBIS code: %s, result != DLMS_ERROR_CODE_OK = %d", obis, this->dlms_reading_state_.last_error);
+  }
+  return this->dlms_reading_state_.last_error;
 }
 
 // void DlmsCosemComponent::read_reply_and_go_next_state_(ReadFunction read_fn,
