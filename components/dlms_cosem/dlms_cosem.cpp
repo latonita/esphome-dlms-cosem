@@ -488,7 +488,7 @@ void DlmsCosemComponent::loop() {
     case State::ASSOCIATION_RCV: {
       // check the reply and go to next stage
       // todo smth with aarq reply
-      this->set_next_state_(State::DATA_ENQ_UNIT);
+      this->set_next_state_(State::DATA_NEXT);
     } break;
 
       // case State::OPEN_SESSION_GET_ID:
@@ -531,6 +531,7 @@ void DlmsCosemComponent::loop() {
         auto req = request_iter->first;
         auto sens = request_iter->second;
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
+
         // this->prepare_and_send_dlms_request(req.c_str(), type, State::DATA_RECV);
         this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
       }
@@ -543,10 +544,11 @@ void DlmsCosemComponent::loop() {
       {
         auto scal = this->buffers_.gx_register.scaler;
         auto unit = this->buffers_.gx_register.unit;
-        ESP_LOGD(TAG, "OBIS code: %s, scaler: %d, unit: %s", req.c_str(), scal, unit);
+        ESP_LOGD(TAG, "scaler: %d, unit: %d", scal, unit);
+        //ESP_LOGD(TAG, "OBIS code: %s, scaler: %d, unit: %s", req.c_str(), scal, unit);
         const char *unit_str = obj_getUnitAsString(unit);
         if (unit_str != NULL) {
-          ESP_LOGD(TAG, "Unit: %s", unit);
+          ESP_LOGD(TAG, "Unit: %s", unit_str);
         } else {
           ESP_LOGD(TAG, "Unit: unknown");
         }
@@ -740,7 +742,7 @@ void DlmsCosemComponent::InOutBuffers::init() {
 void DlmsCosemComponent::InOutBuffers::reset() {
   mes_clear(&out_msg);
   reply_clear(&reply);
-  reply.complete = 0;
+  reply.complete = 1;
   out_msg_index = 0;
   out_msg_data_pos = 0;
   in.size = 0;
@@ -812,7 +814,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obi
     return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
                           &this->buffers_.reply.dataValue);
   };
-  this->send_dlms_req_and_next(make, parse, State::DATA_RECV, false, false);
+  this->send_dlms_req_and_next(make, parse, State::DATA_ENQ, false, false);
 }
 
 void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type) {
@@ -882,6 +884,7 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
 }
 
 int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis) {
+  ESP_LOGD(TAG,"set_sensor_value %p %p", sensor, obis);
   if (buffers_.reply.complete) {
     auto vt = buffers_.reply.dataType;
     ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
@@ -894,7 +897,8 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
     auto var = &this->buffers_.gx_register.value;
     auto scal = this->buffers_.gx_register.scaler;
     auto unit = this->buffers_.gx_register.unit;
-    ESP_LOGD(TAG, "OBIS code: %s, scaler: %d, unit: %s", obis, scal, unit);
+
+    ESP_LOGD(TAG, "scaler: %d, unit: %s", scal, unit);
     const char *unit_str = obj_getUnitAsString(unit);
     if (unit_str != NULL) {
       ESP_LOGD(TAG, "Unit: %s", unit);
