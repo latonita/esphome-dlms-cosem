@@ -67,7 +67,7 @@ static constexpr uint8_t HDLC_FLAG = 0x7E;
 static const uint8_t CMD_ACK_SET_BAUD_AND_MODE[] = {ACK, '0', '5', '1', CR, LF};
 static const uint8_t CMD_CLOSE_SESSION[] = {SOH, 0x42, 0x30, ETX, 0x75};
 
-static constexpr uint8_t BOOT_WAIT_S = 180;  // 10;
+static constexpr uint8_t BOOT_WAIT_S = 15;  // 10;
 
 static char empty_str[] = "";
 
@@ -286,7 +286,7 @@ void DlmsCosemComponent::loop() {
 
       if (this->check_rx_timeout_()) {
         ESP_LOGE(TAG, "RX timeout.");
-        current_rr_->set_error();
+        this->dlms_reading_state_.last_error = DLMS_ERROR_CODE_HARDWARE_FAULT;
         this->stats_.invalid_frames_ += reading_state_.err_invalid_frames;
         // if mission critical
         if (reading_state_.mission_critical) {
@@ -330,6 +330,7 @@ void DlmsCosemComponent::loop() {
       }
 
       if (buffers_.reply.complete == 0) {
+        ESP_LOGD(TAG, "DLMS Reply not complete, need more HDLC frames. Continue reading.");
         // data in multiple frames.
         // never tested.
         // keep reading until full reply is received.
@@ -343,11 +344,11 @@ void DlmsCosemComponent::loop() {
       // current_rr_->parse(&buffers_.reply);
       auto parse_ret = this->dlms_reading_state_.parser_fn();
       this->dlms_reading_state_.last_error = parse_ret;
-      
+
       if (parse_ret == DLMS_ERROR_CODE_OK) {
-        ESP_LOGD(TAG, "In result == DLMS_ERROR_CODE_OK");
+        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
       } else {
-        ESP_LOGE(TAG, "Error in state %s", this->state_to_string(state_));
+        ESP_LOGE(TAG, "DLSM parser fn error %d %s", this->dlms_error_to_string(parse_ret));
         set_next_state_(State::IDLE);
       }
       // if (current_rr_->result().has_value()) {
@@ -812,10 +813,16 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
   dlms_reading_state_.next_state = next_state;
   dlms_reading_state_.mission_critical = mission_critical;
   dlms_reading_state_.reply_is_complete = false;
+  dlms_reading_state_.last_error = DLMS_ERROR_CODE_OK;
   buffers_.reset();
   int ret = DLMS_ERROR_CODE_OK;
   if (maker != nullptr) {
     ret = maker();
+    if (ret != DLMS_ERROR_CODE_OK) {
+      ESP_LOGE(TAG, "Error in DLSM request maker function %d '%s'", ret, dlms_error_to_string(ret));
+      this->set_next_state_(State::IDLE);
+      return;
+    }
   }
 
   reading_state_ = {};
@@ -861,7 +868,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
     if (sensor->get_type() == SensorType::TEXT_SENSOR) {
       auto var = &this->buffers_.gx_register.value;
       if (var && var->byteArr && var->byteArr->size > 0) {
-        //auto arr = cosem_rr_.data_.value.byteArr;
+        // auto arr = cosem_rr_.data_.value.byteArr;
         auto arr = var->byteArr;
 
         ESP_LOGV(TAG, "data size=%d", arr->size);
@@ -950,7 +957,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 // }
 
 void DlmsCosemComponent::send_dlms_messages_() {
-  const int MAX_BYTES_IN_ONE_SHOT = 16;
+  const int MAX_BYTES_IN_ONE_SHOT = 64;
   gxByteBuffer *buffer = buffers_.out_msg.data[buffers_.out_msg_index];
 
   int bytes_to_send = buffer->size - buffers_.out_msg_data_pos;
@@ -968,7 +975,8 @@ void DlmsCosemComponent::send_dlms_messages_() {
     if (this->flow_control_pin_ != nullptr)
       this->flow_control_pin_->digital_write(false);
 
-    ESP_LOGVV(TAG, "TX: %s", format_frame_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
+    //    ESP_LOGVV(TAG, "TX: %s", format_frame_pretty(buffer->data + buffers_.out_msg_data_pos,
+    //    bytes_to_send).c_str());
     ESP_LOGV(TAG, "TX: %s", format_hex_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
 
     this->update_last_rx_time_();
@@ -993,6 +1001,7 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
   uint32_t read_start = millis();
   uint8_t *p;
 
+  ESP_LOGD(TAG, "avail RX: %d", count_available);
   buffers_.check_and_grow_input(count_available);
 
   while (count_available-- > 0) {
@@ -1008,9 +1017,10 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
     // this->buffers_.amount_in++;
 
     if (stop_fn(this->buffers_.in.data, this->buffers_.in.size)) {
-      ESP_LOGVV(TAG, "RX: %s", format_frame_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
+      //      ESP_LOGVV(TAG, "RX: %s", format_frame_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ESP_LOGV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ret_val = this->buffers_.in.size;
+      
       // this->buffers_.amount_in = 0;
       this->update_last_rx_time_();
       return ret_val;
@@ -1024,7 +1034,7 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
 
 size_t DlmsCosemComponent::receive_frame_hdlc_() {
   // HDLC frame: <FLAG>data<FLAG>
-  ESP_LOGVV(TAG, "Waiting for HDLC frame");
+  // ESP_LOGVV(TAG, "Waiting for HDLC frame");
   auto frame_end_check_hdlc = [](uint8_t *b, size_t s) {
     auto ret = s >= 2 && b[0] == HDLC_FLAG && b[s - 1] == HDLC_FLAG;
     if (ret) {
@@ -1132,6 +1142,8 @@ const char *DlmsCosemComponent::dlms_error_to_string(int error) {
   switch (error) {
     case DLMS_ERROR_CODE_OK:
       return "DLMS_ERROR_CODE_OK";
+    case DLMS_ERROR_CODE_HARDWARE_FAULT:
+      return "DLMS_ERROR_CODE_HARDWARE_FAULT";
     case DLMS_ERROR_CODE_READ_WRITE_DENIED:
       return "DLMS_ERROR_CODE_READ_WRITE_DENIED";
     case DLMS_ERROR_CODE_UNDEFINED_OBJECT:
