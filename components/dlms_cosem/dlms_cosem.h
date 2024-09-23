@@ -40,123 +40,6 @@ using ReadFunction = std::function<size_t()>;
 using DlmsRequestMaker = std::function<int()>;
 using DlmsResponseParser = std::function<int()>;
 
-class RequestResponse {
- public:
-  void set_settings(dlmsSettings *settings) { this->settings_ = settings; };
-
-  virtual int parse(gxReplyData *reply) = 0;
-
-  void set_error() { this->result_ = -1; }
-
-  const optional<int> &result() { return this->result_; }
-
-  void start(message *messages) {
-    this->result_.reset();
-    this->prepare_messages(messages);
-  }
-
- protected:
-  virtual void prepare_messages(message *messages) = 0;
-
-  dlmsSettings *settings_{nullptr};
-  optional<int> result_;
-};
-
-class BuffersReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_snrmRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_snrmRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = cl_parseUAResponse(this->settings_, &reply->data);
-    ESP_LOGV(TAG, "cl_parseUAResponse ret %d", *result_);
-    return this->result_.value();
-  }
-};
-
-class AarqReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_aarqRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_aarqRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = cl_parseAAREResponse(this->settings_, &reply->data);
-    ESP_LOGV(TAG, "cl_parseAAREResponse ret %d", *result_);
-    return this->result_.value();
-  }
-};
-
-class CosemReqResp : public RequestResponse {
- public:
-  void set_logical_name(const char *logicname, DLMS_OBJECT_TYPE type = DLMS_OBJECT_TYPE_REGISTER) {
-    int ret = cosem_init(BASE(data_), type, logicname);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cosem_init ERROR %d", ret);
-
-    /* cosem_init overwrites attribute_! */
-    ESP_LOGV(TAG, "setLogicalName attr %d", attribute_);
-  }
-
-  void prepare_messages(message *messages) override {
-    ESP_LOGV(TAG, "cl_read(%p, %p, %d, %p)", settings_, BASE(data_), attribute_, messages);
-    int ret = cl_read(settings_, BASE(data_), attribute_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_read ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    result_ = cl_updateValue(settings_, BASE(data_), attribute_, &reply->dataValue);
-    ESP_LOGV(TAG, "cl_updateValue ret %d", *result_);
-    if (result_ == 0) {
-      value_ = var_toInteger(&data_.value);
-      value_float_ = var_toDouble(&data_.value);
-    }
-    return result_.value();
-  }
-
-  int value() const { return value_; }
-  float value_float() const { return value_float_; }
-
-  gxRegister data_;
-  unsigned char attribute_{2};
-  int value_{0};
-  float value_float_{0.0f};
-};
-
-class SessionReleaseReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_releaseRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_releaseRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = DLMS_ERROR_CODE_OK;
-    return DLMS_ERROR_CODE_OK;
-  }
-};
-
-class DisconnectReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_disconnectRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_disconnectRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = DLMS_ERROR_CODE_OK;
-    return DLMS_ERROR_CODE_OK;
-  }
-};
-
 class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
  public:
   //  DlmsCosemComponent() = default;
@@ -234,8 +117,6 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void set_next_state_(State next_state) { state_ = next_state; };
   void set_next_state_delayed_(uint32_t ms, State next_state);
 
-  void start_comms_and_next(RequestResponse *rr, State next_state, bool mission_critical = false);
-  
   void prepare_and_send_dlms_buffers();
   void prepare_and_send_dlms_aarq();
   void prepare_and_send_dlms_auth();
@@ -305,18 +186,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   } buffers_;
 
  protected:
-  // DLMS related
-  //  FrameReceiver frame_receiver_;
   dlmsSettings dlms_settings_;
-
-  BuffersReqResp buffers_rr_;
-
-  AarqReqResp aarq_rr_;
-  CosemReqResp cosem_rr_;
-  SessionReleaseReqResp session_release_rr_;
-  DisconnectReqResp disconnect_rr_;
-
-  RequestResponse *current_rr_{nullptr};
 
   void clear_rx_buffers_();
 
