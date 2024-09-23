@@ -909,7 +909,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
     ESP_LOGD(TAG, "scaler: %d, unit: %d", scal, unit);
     const char *unit_str = obj_getUnitAsString(unit);
     if (unit_str != NULL) {
-      ESP_LOGD(TAG, "Unit: %s", unit);
+      ESP_LOGD(TAG, "Unit: %s", unit_str);
     } else {
       ESP_LOGD(TAG, "Unit: unknown");
     }
