@@ -214,6 +214,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     // OPEN_SESSION_GET_ID,
     // SET_BAUD,
     // ACK_START_GET_INFO,
+    DATA_ENQ_UNIT,
     DATA_ENQ,
     DATA_RECV,
     DATA_NEXT,
@@ -244,7 +245,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void prepare_and_send_dlms_disconnect();
   
   void send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
-                              bool mission_critical = false);
+                              bool mission_critical = false, bool clear_buffer = true);
   
   int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
 
