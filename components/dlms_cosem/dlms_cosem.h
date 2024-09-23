@@ -19,6 +19,7 @@
 #include <dlmssettings.h>
 #include <client.h>
 #include <cosem.h>
+#include <converters.h>
 
 namespace esphome {
 namespace dlms_cosem {
@@ -237,6 +238,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void prepare_and_send_dlms_buffers();
   void prepare_and_send_dlms_aarq();
   void prepare_and_send_dlms_auth();
+  void prepare_and_send_dlms_data_unit_request(const char *obis, DLMS_OBJECT_TYPE type);
   void prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type);
   void prepare_and_send_dlms_release();
   void prepare_and_send_dlms_disconnect();

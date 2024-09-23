@@ -775,7 +775,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
   this->send_dlms_req_and_next(make, parse, State::ASSOCIATION_RCV);
 }
 
-void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type) {
+void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, DLMS_OBJECT_TYPE type) {
   auto ret = cosem_init(BASE(this->buffers_.gx_register), type, obis);
   if (ret != DLMS_ERROR_CODE_OK) {
     ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
@@ -786,6 +786,31 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DL
   auto make = [this]() {
     return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
                    &this->buffers_.out_msg);
+  };
+  auto parse = [this]() {
+    return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                          &this->buffers_.reply.dataValue);
+  };
+  this->send_dlms_req_and_next(make, parse, State::DATA_RECV);
+}
+
+void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type) {
+  auto ret = cosem_init(BASE(this->buffers_.gx_register), type, obis);
+  if (ret != DLMS_ERROR_CODE_OK) {
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
+    this->set_next_state_(State::DATA_NEXT);
+    return;
+  }
+
+  auto make = [this]() {
+    ESP_LOGD(TAG, "maker for data");
+    auto ret1 = cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), 3, &this->buffers_.out_msg);
+    ESP_LOGD(TAG, "maker for data ret1 = %d", ret1);
+    auto ret2 = cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                        &this->buffers_.out_msg);
+    ESP_LOGD(TAG, "maker for data ret2 = %d", ret2);
+
+    return ret2;
   };
   auto parse = [this]() {
     return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
@@ -850,6 +875,16 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
     // result is okay, value shall be there
     auto vt = buffers_.reply.dataType;
     auto var = &this->buffers_.gx_register.value;
+    auto scal = this->buffers_.gx_register.scaler;
+    auto unit = this->buffers_.gx_register.unit;
+    ESP_LOGD(TAG, "OBIS code: %s, scaler: %d, unit: %s", obis, scal, unit);
+    const char *unit_str = obj_getUnitAsString(unit);
+    if (unit_str != NULL) {
+      ESP_LOGD(TAG, "Unit: %s", unit);
+    } else {
+      ESP_LOGD(TAG, "Unit: unknown");
+    }
+
 
     if (sensor->get_type() == SensorType::SENSOR) {
       //
@@ -1020,7 +1055,7 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
       //      ESP_LOGVV(TAG, "RX: %s", format_frame_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ESP_LOGV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ret_val = this->buffers_.in.size;
-      
+
       // this->buffers_.amount_in = 0;
       this->update_last_rx_time_();
       return ret_val;
