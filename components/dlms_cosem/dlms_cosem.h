@@ -19,6 +19,7 @@
 #include <dlmssettings.h>
 #include <client.h>
 #include <cosem.h>
+#include <converters.h>
 
 namespace esphome {
 namespace dlms_cosem {
@@ -36,167 +37,8 @@ using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
 using FrameStopFunction = std::function<bool(uint8_t *buf, size_t size)>;
 using ReadFunction = std::function<size_t()>;
 
-// class FrameReceiver : public uart::UARTDevice {
-//  public:
-//   FrameReceiver() {
-//     BYTE_BUFFER_INIT(&rbuffer_);
-//     bb_capacity(&rbuffer_, 128);
-//     mes_init(&messages_);
-//     reply_init(&reply_);
-//     resetcomm();
-//   }
-
-//   void increase_rbuffer(int more) {
-//     if (rbuffer_.size + more > rbuffer_.capacity) {
-//       bb_capacity(&rbuffer_, 20 + rbuffer_.size + more);
-//     }
-//   }
-
-//   void resetcomm() {
-//     mes_clear(&messages_);
-//     reply_clear(&reply_);
-
-//     mindex_ = 0;
-//     mdatapos_ = 0;
-//     eop_found_ = false;
-
-//     rbuffer_.size = 0;
-//     rbuffer_.position = 0;
-//   }
-
-//   ~FrameReceiver() {
-//     bb_clear(&rbuffer_);
-//     mes_clear(&messages_);
-//     reply_clear(&reply_);
-//   }
-
-//  public:
-//   // protected:
-//   gxByteBuffer rbuffer_;
-//   message messages_;
-//   gxReplyData reply_;
-//   int mindex_;
-//   int mdatapos_;
-//   bool eop_found_;
-//   //  int timeout_;
-// };
-
-class RequestResponse {
- public:
-  void set_settings(dlmsSettings *settings) { this->settings_ = settings; };
-
-  virtual int parse(gxReplyData *reply) = 0;
-
-  void set_error() { this->result_ = -1; }
-
-  const optional<int> &result() { return this->result_; }
-
-  void start(message *messages) {
-    this->result_.reset();
-    this->prepare_messages(messages);
-  }
-
- protected:
-  virtual void prepare_messages(message *messages) = 0;
-
-  dlmsSettings *settings_{nullptr};
-  optional<int> result_;
-};
-
-class BuffersReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_snrmRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_snrmRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = cl_parseUAResponse(this->settings_, &reply->data);
-    ESP_LOGV(TAG, "cl_parseUAResponse ret %d", *result_);
-    return this->result_.value();
-  }
-};
-
-class AarqReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_aarqRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_aarqRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = cl_parseAAREResponse(this->settings_, &reply->data);
-    ESP_LOGV(TAG, "cl_parseAAREResponse ret %d", *result_);
-    return this->result_.value();
-  }
-};
-
-class CosemReqResp : public RequestResponse {
- public:
-  void set_logical_name(const char *logicname, DLMS_OBJECT_TYPE type = DLMS_OBJECT_TYPE_REGISTER) {
-    int ret = cosem_init(BASE(data_), type, logicname);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cosem_init ERROR %d", ret);
-
-    /* cosem_init overwrites attribute_! */
-    ESP_LOGV(TAG, "setLogicalName attr %d", attribute_);
-  }
-
-  void prepare_messages(message *messages) override {
-    ESP_LOGV(TAG, "cl_read(%p, %p, %d, %p)", settings_, BASE(data_), attribute_, messages);
-    int ret = cl_read(settings_, BASE(data_), attribute_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_read ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    result_ = cl_updateValue(settings_, BASE(data_), attribute_, &reply->dataValue);
-    ESP_LOGV(TAG, "cl_updateValue ret %d", *result_);
-    if (result_ == 0) {
-      value_ = var_toInteger(&data_.value);
-      value_float_ = var_toDouble(&data_.value);
-    }
-    return result_.value();
-  }
-
-  int value() const { return value_; }
-  float value_float() const { return value_float_; }
-
-  gxRegister data_;
-  unsigned char attribute_{2};
-  int value_{0};
-  float value_float_{0.0f};
-};
-
-class SessionReleaseReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_releaseRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_releaseRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = DLMS_ERROR_CODE_OK;
-    return DLMS_ERROR_CODE_OK;
-  }
-};
-
-class DisconnectReqResp : public RequestResponse {
- public:
-  void prepare_messages(message *messages) override {
-    int ret = cl_disconnectRequest(this->settings_, messages);
-    if (ret != 0)
-      ESP_LOGE(TAG, "cl_disconnectRequest ERROR %d", ret);
-  }
-
-  int parse(gxReplyData *reply) override {
-    this->result_ = DLMS_ERROR_CODE_OK;
-    return DLMS_ERROR_CODE_OK;
-  }
-};
+using DlmsRequestMaker = std::function<int()>;
+using DlmsResponseParser = std::function<int()>;
 
 class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
  public:
@@ -255,6 +97,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     // OPEN_SESSION_GET_ID,
     // SET_BAUD,
     // ACK_START_GET_INFO,
+    DATA_ENQ_UNIT,
     DATA_ENQ,
     DATA_RECV,
     DATA_NEXT,
@@ -274,10 +117,21 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void set_next_state_(State next_state) { state_ = next_state; };
   void set_next_state_delayed_(uint32_t ms, State next_state);
 
-  void start_comms_and_next(RequestResponse *rr, State next_state, bool mission_critical = false);
+  void prepare_and_send_dlms_buffers();
+  void prepare_and_send_dlms_aarq();
+  void prepare_and_send_dlms_auth();
+  void prepare_and_send_dlms_data_unit_request(const char *obis, DLMS_OBJECT_TYPE type);
+  void prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type);
+  void prepare_and_send_dlms_release();
+  void prepare_and_send_dlms_disconnect();
+  
+  void send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
+                              bool mission_critical = false, bool clear_buffer = true);
+  
+  int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
 
-  void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
-                                     bool check_crc);
+  // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
+  //                                    bool check_crc);
   struct {
     ReadFunction read_fn;
     State next_state;
@@ -290,6 +144,15 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   } reading_state_{nullptr, State::IDLE, false, false, 0, 0, 0, 0};
   size_t received_frame_size_{0};
   bool received_complete_reply_{false};
+
+  struct {
+    DlmsRequestMaker maker_fn;
+    DlmsResponseParser parser_fn;
+    State next_state;
+    bool mission_critical;
+    bool reply_is_complete;
+    int last_error;
+  } dlms_reading_state_{nullptr, nullptr, State::IDLE, false, false, DLMS_ERROR_CODE_OK};
 
   uint32_t baud_rate_handshake_{9600};
   uint32_t baud_rate_{9600};
@@ -316,21 +179,14 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     void check_and_grow_input(uint16_t more_data);
     // next function shows whether there are still messages to send
     const bool has_more_messages_to_send() const { return out_msg_index < out_msg.size; }
+    
+    gxRegister gx_register;
+    unsigned char gx_attribute{2};
 
   } buffers_;
 
  protected:
-  // DLMS related
-  //  FrameReceiver frame_receiver_;
   dlmsSettings dlms_settings_;
-
-  BuffersReqResp buffers_rr_;
-  AarqReqResp aarq_rr_;
-  CosemReqResp cosem_rr_;
-  SessionReleaseReqResp session_release_rr_;
-  DisconnectReqResp disconnect_rr_;
-
-  RequestResponse *current_rr_{nullptr};
 
   void clear_rx_buffers_();
 

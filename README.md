@@ -23,8 +23,8 @@
 ...
 
 external_components:
-  components: [dlms_cosem]
-   - source: github://latonita/esphome-dlms-cosem
+  - source: github://latonita/esphome-dlms-cosem
+    components: [dlms_cosem]
 
 uart:
   - id: bus_1
