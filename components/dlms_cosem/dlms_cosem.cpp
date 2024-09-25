@@ -152,7 +152,7 @@ void DlmsCosemComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Sensors:");
   for (const auto &sensors : sensors_) {
     auto &s = sensors.second;
-    ESP_LOGCONFIG(TAG, "    REQUEST: %s", s->get_obis_code().c_str());
+    ESP_LOGCONFIG(TAG, "    OBIS code: %s, Name: %s", s->get_obis_code().c_str(), s->get_sensor_name().c_str());
   }
 }
 
@@ -250,8 +250,10 @@ void DlmsCosemComponent::loop() {
       // this->set_next_state_(reading_state_.next_state);
 
       auto ret = dlms_getData2(&dlms_settings_, &buffers_.in, &buffers_.reply, 0);
-      ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, this->dlms_error_to_string(ret),
+      if (ret != DLMS_ERROR_CODE_OK || buffers_.reply.complete == 0) {
+        ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, this->dlms_error_to_string(ret),
                 buffers_.reply.complete);
+      }
 
       if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
         ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, this->dlms_error_to_string(ret));
@@ -277,7 +279,7 @@ void DlmsCosemComponent::loop() {
       this->dlms_reading_state_.last_error = parse_ret;
 
       if (parse_ret == DLMS_ERROR_CODE_OK) {
-        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
+//        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
       } else {
         ESP_LOGE(TAG, "DLSM parser fn error %d %s", this->dlms_error_to_string(parse_ret));
         set_next_state_(State::IDLE);
@@ -363,20 +365,8 @@ void DlmsCosemComponent::loop() {
         auto req = request_iter->first;
         auto sens = request_iter->second;
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
-        EntityBase *sens_base = nullptr;
-        if (sens->get_type() == SensorType::TEXT_SENSOR) {
-          auto text_sens = static_cast<DlmsCosemTextSensor *>(sens);
-          sens_base = static_cast<EntityBase *>(text_sens);
-        } else {
-          auto sens_sens = static_cast<DlmsCosemSensor *>(sens);
-          sens_base = static_cast<EntityBase *>(sens_sens);
-        }
         
-        if (sens != nullptr) {
-          ESP_LOGD(TAG, "OBIS code: %s, Sensor name: %s", req.c_str(), sens_base->get_name().c_str());
-        } else {
-          ESP_LOGD(TAG, "OBIS code: %s", req.c_str());
-        }
+        ESP_LOGD(TAG, "OBIS code: %s, Sensor: %s", req.c_str(), sens->get_sensor_name().c_str());
 
         // if (type == DLMS_OBJECT_TYPE_REGISTER)
         //   this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
@@ -443,7 +433,7 @@ void DlmsCosemComponent::loop() {
       this->update_last_rx_time_();
 
       if (sensor_iter != this->sensors_.end()) {
-        if (sensor_iter->second->get_dont_publish()) {
+        if (sensor_iter->second->shall_we_publish()) {
           sensor_iter->second->publish();
         }
         sensor_iter++;
@@ -619,7 +609,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
     ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
   }
 
-  if (sensor->get_dont_publish()) {
+  if (!sensor->shall_we_publish()) {
     return this->dlms_reading_state_.last_error;
   }
 
