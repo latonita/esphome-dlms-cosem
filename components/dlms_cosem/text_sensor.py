@@ -12,6 +12,8 @@ from . import (
 
 AUTO_LOAD = ["dlms_cosem"]
 
+CONF_ATTRIBUTE = "attribute"
+
 DlmsCosemTextSensor = dlms_cosem_ns.class_(
     "DlmsCosemTextSensor", text_sensor.TextSensor
 )
@@ -24,6 +26,7 @@ CONFIG_SCHEMA = cv.All(
             cv.GenerateID(CONF_DLMS_COSEM_ID): cv.use_id(DlmsCosem),
             cv.Required(CONF_OBIS_CODE): obis_code,
             cv.Optional(CONF_DONT_PUBLISH, default=False): cv.boolean,
+            cv.Optional(CONF_ATTRIBUTE, default=2): cv.int_,
         }
     ),
     cv.has_exactly_one_key(CONF_OBIS_CODE),
@@ -35,4 +38,5 @@ async def to_code(config):
     var = await text_sensor.new_text_sensor(config)
     cg.add(var.set_obis_code(config[CONF_OBIS_CODE]))
     cg.add(var.set_dont_publish(config.get(CONF_DONT_PUBLISH)))
+    cg.add(var.set_attribute(config[CONF_ATTRIBUTE]))
     cg.add(component.register_sensor(var))

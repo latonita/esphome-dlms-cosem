@@ -27,6 +27,9 @@ class DlmsCosemSensorBase {
   void set_dont_publish(bool dont_publish) { this->we_shall_publish_ = !dont_publish; }
   bool shall_we_publish() const { return this->we_shall_publish_; }
 
+  void set_attribute(uint8_t attr) { this->attribute_ = attr;}
+  uint8_t get_attribute() { return this->attribute_;}
+
   void reset() {
     has_value_ = false;
     tries_ = 0;
@@ -48,6 +51,7 @@ class DlmsCosemSensorBase {
   bool has_value_;
   uint8_t tries_{0};
   bool we_shall_publish_{true};
+  uint8_t attribute_{2};
 };
 
 class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {

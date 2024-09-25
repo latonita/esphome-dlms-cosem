@@ -18,7 +18,10 @@
 
 # Примеры 
 
-## ce207 (СПОДЭС)
+## Однофазный счетчик (ПУ категории D) 
+Используется список параметров ПУ категории D из стандарта СПОДЭС. Они применяются в однофазных ПУ потребителей.
+
+Пример файла конфигурации, протестированого на Энергомера CE207-SPds.
 
 ```
 esphome:
@@ -55,6 +58,145 @@ dlms_cosem:
   update_interval: 60s
   receive_timeout: 1s
 
+sensor:
+# 2 Current - Iph Ток фазы 1.0.11.7.0.255
+  - platform: dlms_cosem
+    name: Ток фазы
+    obis_code: 1.0.11.7.0.255
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+
+# 3 Current - In Ток нулевого провода 1.0.91.7.0.255
+  - platform: dlms_cosem
+    name: Ток нулевого провода
+    obis_code: 1.0.91.7.0.255
+    unit_of_measurement: A
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+
+# 4 Voltage - V Напряжение фазы 1.0.12.7.0.255
+  - platform: dlms_cosem
+    name: Напряжение фазы
+    obis_code: 1.0.12.7.0.255
+    unit_of_measurement: V
+    accuracy_decimals: 1
+    device_class: voltage
+    state_class: measurement
+
+# 5 Power Factor - PF Коэффициент мощности 1.0.13.7.0.255
+  - platform: dlms_cosem
+    name: Коэффициент мощности
+    obis_code: 1.0.13.7.0.255
+    unit_of_measurement: ''
+    accuracy_decimals: 2
+    device_class: power_factor
+    state_class: measurement
+
+# 6 Frequency Частота сети 1.0.14.7.0.255
+  - platform: dlms_cosem
+    name: Частота сети
+    obis_code: 1.0.14.7.0.255
+    unit_of_measurement: Hz
+    accuracy_decimals: 1
+    device_class: frequency
+    state_class: measurement
+
+# 7 Apparent Power Полная мощность 1.0.9.7.0.255
+  - platform: dlms_cosem
+    name: Полная мощность
+    obis_code: 1.0.9.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+# 8 Signed Active Power (+Import; -Export) Активная мощность 1.0.1.7.0.255
+  - platform: dlms_cosem
+    name: Активная мощность
+    obis_code: 1.0.1.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+# 9 Signed Reactive Power (+Import; -Export) Реактивная мощность 1.0.3.7.0.255
+  - platform: dlms_cosem
+    name: Реактивная мощность
+    obis_code: 1.0.3.7.0.255
+    unit_of_measurement: W
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+# 10 Cumulative Active Energy (Import) Активная энергия, импорт 1.0.1.8.0.255
+  - platform: dlms_cosem
+    name: Электроэнергия
+    obis_code: 1.0.1.8.0.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+# 10.1 Cumulative Active Energy (Import) tariff 1
+  - platform: dlms_cosem
+    name: Электроэнергия Т1
+    obis_code: 1.0.1.8.1.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+# 10.2 Cumulative Active Energy (Import) tariff 2
+  - platform: dlms_cosem
+    name: Электроэнергия Т2
+    obis_code: 1.0.1.8.2.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+# 11 Cumulative Active Energy (Export) Активная энергия, экспорт 1.0.2.8.0.255
+  - platform: dlms_cosem
+    name: Электроэнергия, экспорт
+    obis_code: 1.0.2.8.0.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+# 12 Cumulative Reactive Energy (Import) Реактивная энергия, импорт 1.0.3.8.0.255
+  - platform: dlms_cosem
+    name: Реактивная энергия
+    obis_code: 1.0.3.8.0.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
+# 13 Cumulative Reactive Energy (Export) Реактивная энергия, экспорт 1.0.4.8.0.255
+  - platform: dlms_cosem
+    name: Реактивная энергия, экспорт
+    obis_code: 1.0.4.8.0.255
+    unit_of_measurement: kWh
+    accuracy_decimals: 3
+    device_class: energy
+    state_class: total_increasing
+    filters:
+      - multiply: 0.001
+
 text_sensor:
   - platform: dlms_cosem
     name: Заводской номер
@@ -73,50 +215,4 @@ text_sensor:
     obis_code: 0.0.96.1.3.255
     entity_category: diagnostic
 
-sensor:
-  - platform: dlms_cosem
-    name: Электроэнергия
-    obis_code: 1.0.1.8.0.255
-    unit_of_measurement: kWh
-    accuracy_decimals: 0
-    device_class: energy
-    state_class: total_increasing
-    filters:
-      - multiply: 0.001
-
-  - platform: dlms_cosem
-    name: Электроэнергия Т1
-    obis_code: 1.0.1.8.1.255
-    unit_of_measurement: kWh
-    accuracy_decimals: 0
-    device_class: energy
-    state_class: total_increasing
-    filters:
-      - multiply: 0.001
-
-  - platform: dlms_cosem
-    name: Электроэнергия Т2
-    obis_code: 1.0.1.8.2.255
-    unit_of_measurement: kWh
-    accuracy_decimals: 0
-    device_class: energy
-    state_class: total_increasing
-    filters:
-      - multiply: 0.001
-
-  - platform: dlms_cosem
-    name: Активная мощность
-    obis_code: 1.0.1.7.0.255
-    unit_of_measurement: W
-    accuracy_decimals: 0
-    device_class: power
-    state_class: measurement
-
-  - platform: dlms_cosem
-    name: Напряжение фазы
-    obis_code: 1.0.12.7.0.255
-    unit_of_measurement: V
-    accuracy_decimals: 3
-    device_class: voltage
-    state_class: measurement
 ```

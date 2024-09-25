@@ -252,7 +252,7 @@ void DlmsCosemComponent::loop() {
       auto ret = dlms_getData2(&dlms_settings_, &buffers_.in, &buffers_.reply, 0);
       if (ret != DLMS_ERROR_CODE_OK || buffers_.reply.complete == 0) {
         ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, this->dlms_error_to_string(ret),
-                buffers_.reply.complete);
+                  buffers_.reply.complete);
       }
 
       if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
@@ -279,7 +279,8 @@ void DlmsCosemComponent::loop() {
       this->dlms_reading_state_.last_error = parse_ret;
 
       if (parse_ret == DLMS_ERROR_CODE_OK) {
-//        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
+        //        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
+
       } else {
         ESP_LOGE(TAG, "DLSM parser fn error %d %s", this->dlms_error_to_string(parse_ret));
         set_next_state_(State::IDLE);
@@ -365,13 +366,16 @@ void DlmsCosemComponent::loop() {
         auto req = request_iter->first;
         auto sens = request_iter->second;
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
-        
+
         ESP_LOGD(TAG, "OBIS code: %s, Sensor: %s", req.c_str(), sens->get_sensor_name().c_str());
 
         // if (type == DLMS_OBJECT_TYPE_REGISTER)
-        //   this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
-        // units not working so far... so we are requesting just data
-        this->set_next_state_(State::DATA_ENQ);
+        if (sens->get_attribute() != 2) {
+          this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
+        } else {
+          // units not working so far... so we are requesting just data
+          this->set_next_state_(State::DATA_ENQ);
+        }
       }
     } break;
 
@@ -384,6 +388,12 @@ void DlmsCosemComponent::loop() {
       } else {
         auto req = request_iter->first;
         auto sens = request_iter->second;
+
+        // test
+        if (sens->get_attribute() != 2) {
+          auto ret = this->set_sensor_scale_and_unit(sens);
+        }
+
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
         this->prepare_and_send_dlms_data_request(req.c_str(), type);
       }
@@ -394,8 +404,8 @@ void DlmsCosemComponent::loop() {
       this->set_next_state_(State::DATA_NEXT);
 
       auto req = request_iter->first;
-      auto sensor = request_iter->second;
-      auto ret = this->set_sensor_value(sensor, req.c_str());
+      auto sens = request_iter->second;
+      auto ret = this->set_sensor_value(sens, req.c_str());
 
     } break;
 
@@ -502,7 +512,7 @@ void DlmsCosemComponent::InOutBuffers::reset() {
 void DlmsCosemComponent::InOutBuffers::check_and_grow_input(uint16_t more_data) {
   const uint16_t GROW_EPSILON = 20;
   if (in.size + more_data > in.capacity) {
-    ESP_LOGW(TAG, "Growing input buffer from %d to %d", in.capacity, in.size + more_data + GROW_EPSILON);
+    ESP_LOGVV(TAG, "Growing input buffer from %d to %d", in.capacity, in.size + more_data + GROW_EPSILON);
     bb_capacity(&in, in.size + more_data + GROW_EPSILON);
   }
 }
@@ -601,6 +611,28 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
   received_complete_reply_ = false;
 
   set_next_state_(State::COMMS_TX);
+}
+
+int DlmsCosemComponent::set_sensor_scale_and_unit(DlmsCosemSensorBase *sensor) {
+  if (!buffers_.reply.complete)
+    return DLMS_ERROR_CODE_FALSE;
+  auto vt = buffers_.reply.dataType;
+  if (vt != 0)
+    return DLMS_ERROR_CODE_FALSE;
+
+  ESP_LOGD(TAG, "set_sensor_scale_and_unit");
+
+  auto var = &this->buffers_.gx_register.value;
+  if (var && var->byteArr && var->byteArr->size > 0) {
+    // auto arr = cosem_rr_.data_.value.byteArr;
+    auto arr = var->byteArr;
+    ESP_LOGW(TAG, "data size=%d", arr->size);
+    if (arr->size == 2) {
+      auto scaler_pow = static_cast<int8_t>(arr->data[0]);
+      auto unit_type = arr->data[1];
+      ESP_LOGW(TAG, "scaler pow %d, unit %d");
+    }
+  }
 }
 
 int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis) {

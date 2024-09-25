@@ -29,9 +29,6 @@ static const char *TAG = "dlms_cosem";
 static const size_t DEFAULT_IN_BUF_SIZE = 256;
 static const size_t MAX_OUT_BUF_SIZE = 128;
 
-// const uint8_t VAL_NUM = 12;
-// using ValueRefsArray = std::array<char *, VAL_NUM>;
-
 using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
 
 using FrameStopFunction = std::function<bool(uint8_t *buf, size_t size)>;
@@ -42,8 +39,6 @@ using DlmsResponseParser = std::function<int()>;
 
 class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
  public:
-  //  DlmsCosemComponent() = default;
-
   void setup() override;
   void dump_config() override;
   void loop() override;
@@ -128,7 +123,9 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
                               bool mission_critical = false, bool clear_buffer = true);
   
-  int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
+  
+int set_sensor_scale_and_unit(DlmsCosemSensorBase * sensor);
+int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
 
   // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
   //                                    bool check_crc);
