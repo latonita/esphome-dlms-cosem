@@ -363,8 +363,20 @@ void DlmsCosemComponent::loop() {
         auto req = request_iter->first;
         auto sens = request_iter->second;
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
-
-        ESP_LOGD(TAG, "OBIS code: %s", req.c_str());
+        EntityBase *sens_base = nullptr;
+        if (sens->get_type() == SensorType::TEXT_SENSOR) {
+          auto text_sens = static_cast<DlmsCosemTextSensor *>(sens);
+          sens_base = static_cast<EntityBase *>(text_sens);
+        } else {
+          auto sens_sens = static_cast<DlmsCosemSensor *>(sens);
+          sens_base = static_cast<EntityBase *>(sens_sens);
+        }
+        
+        if (sens != nullptr) {
+          ESP_LOGD(TAG, "OBIS code: %s, Sensor name: %s", req.c_str(), sens_base->get_name().c_str());
+        } else {
+          ESP_LOGD(TAG, "OBIS code: %s", req.c_str());
+        }
 
         // if (type == DLMS_OBJECT_TYPE_REGISTER)
         //   this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
@@ -602,7 +614,6 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
 }
 
 int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis) {
-  ESP_LOGD(TAG, "set_sensor_value %p %p", sensor, obis);
   if (buffers_.reply.complete) {
     auto vt = buffers_.reply.dataType;
     ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
