@@ -24,6 +24,9 @@ class DlmsCosemSensorBase {
   void set_obis_code(const char *obis_code) { obis_code_ = obis_code; }
   const std::string &get_obis_code() const { return this->obis_code_; }
 
+  void set_dont_publish(bool dont_publish) { dont_publish_ = dont_publish; }
+  bool get_dont_publish() const { return dont_publish_; }
+
   void reset() {
     has_value_ = false;
     tries_ = 0;
@@ -44,6 +47,7 @@ class DlmsCosemSensorBase {
   std::string obis_code_;
   bool has_value_;
   uint8_t tries_{0};
+  bool dont_publish_{false};
 };
 
 class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {

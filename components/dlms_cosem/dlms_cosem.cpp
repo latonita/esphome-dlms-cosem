@@ -431,7 +431,9 @@ void DlmsCosemComponent::loop() {
       this->update_last_rx_time_();
 
       if (sensor_iter != this->sensors_.end()) {
-        sensor_iter->second->publish();
+        if (sensor_iter->second->get_dont_publish()) {
+          sensor_iter->second->publish();
+        }
         sensor_iter++;
       } else {
         this->stats_.dump();
@@ -604,6 +606,10 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
   if (buffers_.reply.complete) {
     auto vt = buffers_.reply.dataType;
     ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
+  }
+
+  if (sensor->get_dont_publish()) {
+    return this->dlms_reading_state_.last_error;
   }
 
   //      if (cosem_rr_.result().has_value()) {

@@ -31,6 +31,7 @@ CONF_OBIS_CODE = "obis_code"
 CONF_CLIENT_ADDRESS = "client_address"
 CONF_SERVER_ADDRESS = "server_address"
 CONF_DELAY_BETWEEN_REQUESTS = "delay_between_requests"
+CONF_DONT_PUBLISH = "dont_publish"
 
 CONF_INDICATOR = "indicator"
 CONF_REBOOT_AFTER_FAILURE = "reboot_after_failure"
