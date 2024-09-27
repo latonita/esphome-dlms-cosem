@@ -36,6 +36,7 @@ class DlmsCosemSensorBase {
   }
 
   bool has_value() { return has_value_; }
+  virtual bool has_got_scale_and_unit() { return scale_and_unit_detected_; }
 
   void record_failure() {
     if (tries_ < MAX_TRIES) {
@@ -52,6 +53,8 @@ class DlmsCosemSensorBase {
   uint8_t tries_{0};
   bool we_shall_publish_{true};
   uint8_t attribute_{2};
+  bool scale_and_unit_detected_{false};
+
 };
 
 class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
@@ -59,19 +62,29 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
   SensorType get_type() const override { return SENSOR; }
   const StringRef &get_sensor_name() { return this->get_name(); }
   EntityBase *get_base() { return this;}
-  void publish() override { publish_state(value_); }
+  void publish() override { publish_state(this->value_); }
 
-  void set_multiplier(float multiplier) { multiplier_ = multiplier; }
+  void set_scale_and_unit(int8_t scaler, uint8_t unit) {
+    this->scaler_ = scaler;
+    this->unit_ = unit;
+    this->scale_and_unit_detected_ = true;
+    this->scale_f_ = std::pow(10, scaler);
+  }
+  
+  void set_multiplier(float multiplier) { this->multiplier_ = multiplier; }
 
   void set_value(float value) {
-    value_ = value * multiplier_;
-    has_value_ = true;
-    tries_ = 0;
+    this->value_ = value * scale_f_ * multiplier_;
+    this->has_value_ = true;
+    this->tries_ = 0;
   }
 
  protected:
   float value_;
   float multiplier_{1.0f};
+  int8_t scaler_{0};
+  uint8_t unit_{0};
+  float scale_f_{1.0f};
 };
 
 #ifdef USE_TEXT_SENSOR
@@ -81,6 +94,8 @@ class DlmsCosemTextSensor : public DlmsCosemSensorBase, public text_sensor::Text
   const StringRef &get_sensor_name() { return this->get_name(); }
   EntityBase *get_base() { return this;}
   void publish() override { publish_state(value_); }
+
+  bool has_got_scale_and_unit() override { return true; }
 
   void set_value(const char *value) {
     value_ = std::string(value);

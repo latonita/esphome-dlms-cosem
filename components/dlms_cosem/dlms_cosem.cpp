@@ -264,10 +264,11 @@ void DlmsCosemComponent::loop() {
 
       if (buffers_.reply.complete == 0) {
         ESP_LOGD(TAG, "DLMS Reply not complete, need more HDLC frames. Continue reading.");
+        //buffers_.reply.complete = 1;
         // data in multiple frames.
         // never tested, always got complete reply so far
         // in theory we just keep reading until full reply is received.
-        return;
+        // return;
       }
 
       // if buffers_.reply.complete != 0
@@ -371,6 +372,7 @@ void DlmsCosemComponent::loop() {
 
         // if (type == DLMS_OBJECT_TYPE_REGISTER)
         if (sens->get_attribute() != 2) {
+          this->buffers_.gx_attribute = 3;
           this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
         } else {
           // units not working so far... so we are requesting just data
@@ -389,13 +391,15 @@ void DlmsCosemComponent::loop() {
         auto req = request_iter->first;
         auto sens = request_iter->second;
 
+        bool units_were_requested = sens->get_attribute() != 2;
         // test
-        if (sens->get_attribute() != 2) {
+        if (units_were_requested) {
           auto ret = this->set_sensor_scale_and_unit(sens);
         }
 
         auto type = sens->get_type() == SensorType::TEXT_SENSOR ? DLMS_OBJECT_TYPE_DATA : DLMS_OBJECT_TYPE_REGISTER;
-        this->prepare_and_send_dlms_data_request(req.c_str(), type);
+        this->buffers_.gx_attribute = 2;
+        this->prepare_and_send_dlms_data_request(req.c_str(), type, !units_were_requested);
       }
     } break;
 
@@ -538,7 +542,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obi
   }
 
   auto make = [this]() {
-    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), 3, &this->buffers_.out_msg);
+    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute, &this->buffers_.out_msg);
   };
   auto parse = [this]() {
     return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
@@ -547,8 +551,11 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obi
   this->send_dlms_req_and_next(make, parse, State::DATA_ENQ, false, false);
 }
 
-void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type) {
-  auto ret = cosem_init(BASE(this->buffers_.gx_register), type, obis);
+void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type, bool reg_init) {
+  int ret = DLMS_ERROR_CODE_OK;
+  if (reg_init) {
+    ret = cosem_init(BASE(this->buffers_.gx_register), type, obis);
+  }
   if (ret != DLMS_ERROR_CODE_OK) {
     ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
     this->set_next_state_(State::DATA_NEXT);
@@ -556,7 +563,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, DL
   }
 
   auto make = [this]() {
-    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), 2, &this->buffers_.out_msg);
+    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute, &this->buffers_.out_msg);
   };
   auto parse = [this]() {
     return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
@@ -614,25 +621,20 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
 }
 
 int DlmsCosemComponent::set_sensor_scale_and_unit(DlmsCosemSensorBase *sensor) {
+  ESP_LOGD(TAG, "set_sensor_scale_and_unit");
   if (!buffers_.reply.complete)
     return DLMS_ERROR_CODE_FALSE;
   auto vt = buffers_.reply.dataType;
-  if (vt != 0)
+  ESP_LOGD(TAG, "DLMS_DATA_TYPE: %s (%d)", this->dlms_data_type_to_string(vt), vt);
+  if (vt != 0) {
     return DLMS_ERROR_CODE_FALSE;
-
-  ESP_LOGD(TAG, "set_sensor_scale_and_unit");
-
-  auto var = &this->buffers_.gx_register.value;
-  if (var && var->byteArr && var->byteArr->size > 0) {
-    // auto arr = cosem_rr_.data_.value.byteArr;
-    auto arr = var->byteArr;
-    ESP_LOGW(TAG, "data size=%d", arr->size);
-    if (arr->size == 2) {
-      auto scaler_pow = static_cast<int8_t>(arr->data[0]);
-      auto unit_type = arr->data[1];
-      ESP_LOGW(TAG, "scaler pow %d, unit %d");
-    }
   }
+
+  auto scal = this->buffers_.gx_register.scaler;
+  auto unit = this->buffers_.gx_register.unit;
+  ESP_LOGW(TAG, "scaler pow: %d, unit: %d", scal, unit);
+
+  return DLMS_ERROR_CODE_OK;
 }
 
 int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis) {
@@ -648,6 +650,11 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
   //      if (cosem_rr_.result().has_value()) {
   if (this->dlms_reading_state_.last_error == DLMS_ERROR_CODE_OK) {
     // result is okay, value shall be there
+
+  auto scal = this->buffers_.gx_register.scaler;
+  auto unit = this->buffers_.gx_register.unit;
+  ESP_LOGW(TAG, "scaler pow: %d, unit: %d", scal, unit);
+
     auto vt = buffers_.reply.dataType;
     auto var = &this->buffers_.gx_register.value;
     // auto scal = this->buffers_.gx_register.scaler;
