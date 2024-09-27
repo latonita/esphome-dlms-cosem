@@ -115,8 +115,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void prepare_and_send_dlms_buffers();
   void prepare_and_send_dlms_aarq();
   void prepare_and_send_dlms_auth();
-  void prepare_and_send_dlms_data_unit_request(const char *obis, DLMS_OBJECT_TYPE type);
-  void prepare_and_send_dlms_data_request(const char *obis, DLMS_OBJECT_TYPE type, bool reg_init = true);
+  void prepare_and_send_dlms_data_unit_request(const char *obis, int type);
+  void prepare_and_send_dlms_data_request(const char *obis, int type, bool reg_init = true);
   void prepare_and_send_dlms_release();
   void prepare_and_send_dlms_disconnect();
   

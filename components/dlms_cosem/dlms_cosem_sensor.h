@@ -12,7 +12,8 @@ static constexpr uint8_t MAX_TRIES = 10;
 
 enum SensorType { SENSOR, TEXT_SENSOR };
 
-//const char * UNIT_STR_UNKNOWN = "Unknown unit";
+// const char * UNIT_STR_UNKNOWN = "Unknown unit";
+#define UNIT_STR_UNKNOWN_NOT_YET "Unknown unit / not yet known"
 #define UNIT_STR_UNKNOWN "Unknown unit"
 
 class DlmsCosemSensorBase {
@@ -30,8 +31,8 @@ class DlmsCosemSensorBase {
   void set_dont_publish(bool dont_publish) { this->we_shall_publish_ = !dont_publish; }
   bool shall_we_publish() const { return this->we_shall_publish_; }
 
-  void set_attribute(uint8_t attr) { this->attribute_ = attr;}
-  uint8_t get_attribute() { return this->attribute_;}
+  void set_obis_class(int obis_class) { this->obis_class_ = obis_class; }
+  int get_obis_class() { return this->obis_class_; }
 
   void reset() {
     has_value_ = false;
@@ -52,33 +53,37 @@ class DlmsCosemSensorBase {
 
  protected:
   std::string obis_code_;
+  int obis_class_{3 /*DLMS_OBJECT_TYPE_REGISTER*/};
   bool has_value_;
   uint8_t tries_{0};
   bool we_shall_publish_{true};
-  uint8_t attribute_{2};
   bool scale_and_unit_detected_{false};
-
 };
 
 class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
  public:
   SensorType get_type() const override { return SENSOR; }
   const StringRef &get_sensor_name() { return this->get_name(); }
-  EntityBase *get_base() { return this;}
+  EntityBase *get_base() { return this; }
   void publish() override { publish_state(this->value_); }
 
-  void set_scale_and_unit(int8_t scaler, uint8_t unit, const char * unit_s) {
+  void set_scale_and_unit(int8_t scaler, uint8_t unit, const char *unit_s) {
     this->scale_and_unit_detected_ = true;
     this->scaler_ = scaler;
     this->scale_f_ = std::pow(10, scaler);
     this->unit_ = unit;
     this->unit_s_ = unit_s ? unit_s : UNIT_STR_UNKNOWN;
-    ESP_LOGW("dlms_cosem_sensor", "scaler pow: %d, scale_f: %f, unit: %d (%s)", scaler_, scale_f_, unit_, unit_s_);
+    this->log_scale_and_unit();
   }
-  
+
+  void log_scale_and_unit() {
+    ESP_LOGW("dlms_cosem_sensor", "name: %s, obis: %s, unit: %d (%s), scaler pow: %d, scale_f: %f",
+             this->get_sensor_name().c_str(), this->get_obis_code().c_str(), this->unit_, unit_s_, scaler_, scale_f_);
+  }
+
   float get_scale() const { return scale_f_; }
 
-  const char * get_unit() const { return unit_s_; }
+  const char *get_unit() const { return unit_s_; }
 
   void set_multiplier(float multiplier) { this->multiplier_ = multiplier; }
 
@@ -94,7 +99,7 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
   int8_t scaler_{0};
   float scale_f_{1.0f};
   uint8_t unit_{0};
-  const char * unit_s_ = UNIT_STR_UNKNOWN;
+  const char *unit_s_ = UNIT_STR_UNKNOWN_NOT_YET;
 };
 
 #ifdef USE_TEXT_SENSOR
@@ -102,7 +107,7 @@ class DlmsCosemTextSensor : public DlmsCosemSensorBase, public text_sensor::Text
  public:
   SensorType get_type() const override { return TEXT_SENSOR; }
   const StringRef &get_sensor_name() { return this->get_name(); }
-  EntityBase *get_base() { return this;}
+  EntityBase *get_base() { return this; }
   void publish() override { publish_state(value_); }
 
   bool has_got_scale_and_unit() override { return true; }
