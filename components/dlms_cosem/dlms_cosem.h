@@ -124,7 +124,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
                               bool mission_critical = false, bool clear_buffer = true);
   
   
-int set_sensor_scale_and_unit(DlmsCosemSensorBase * sensor);
+int set_sensor_scale_and_unit(DlmsCosemSensor * sensor);
 int set_sensor_value(DlmsCosemSensorBase * sensor, const char * obis);
 
   // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,

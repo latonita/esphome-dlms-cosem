@@ -12,6 +12,9 @@ static constexpr uint8_t MAX_TRIES = 10;
 
 enum SensorType { SENSOR, TEXT_SENSOR };
 
+//const char * UNIT_STR_UNKNOWN = "Unknown unit";
+#define UNIT_STR_UNKNOWN "Unknown unit"
+
 class DlmsCosemSensorBase {
  public:
   static const uint8_t MAX_REQUEST_SIZE = 15;
@@ -64,13 +67,19 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
   EntityBase *get_base() { return this;}
   void publish() override { publish_state(this->value_); }
 
-  void set_scale_and_unit(int8_t scaler, uint8_t unit) {
-    this->scaler_ = scaler;
-    this->unit_ = unit;
+  void set_scale_and_unit(int8_t scaler, uint8_t unit, const char * unit_s) {
     this->scale_and_unit_detected_ = true;
+    this->scaler_ = scaler;
     this->scale_f_ = std::pow(10, scaler);
+    this->unit_ = unit;
+    this->unit_s_ = unit_s ? unit_s : UNIT_STR_UNKNOWN;
+    ESP_LOGW("dlms_cosem_sensor", "scaler pow: %d, scale_f: %f, unit: %d (%s)", scaler_, scale_f_, unit_, unit_s_);
   }
   
+  float get_scale() const { return scale_f_; }
+
+  const char * get_unit() const { return unit_s_; }
+
   void set_multiplier(float multiplier) { this->multiplier_ = multiplier; }
 
   void set_value(float value) {
@@ -83,8 +92,9 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
   float value_;
   float multiplier_{1.0f};
   int8_t scaler_{0};
-  uint8_t unit_{0};
   float scale_f_{1.0f};
+  uint8_t unit_{0};
+  const char * unit_s_ = UNIT_STR_UNKNOWN;
 };
 
 #ifdef USE_TEXT_SENSOR
