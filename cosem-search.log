@@ -1,0 +1,133 @@
+[13:20:52][I][dlms_cosem.axdr:288]: # 01  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=1, obis=0.0.96.1.1.255, attr_id=2, value_type=09
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_OCTET_STRING at 25, len 10
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 31.30.30.30.30.30.30.30.30.30 (10)
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'1000000000'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 02  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=70, obis=0.0.96.3.10.255, attr_id=3, value_type=16
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_ENUM at 47, len 1
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 01
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'1'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 1.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 03  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=71, obis=0.0.17.0.0.255, attr_id=3, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 60, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 04  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=70, obis=0.1.96.3.10.255, attr_id=3, value_type=16
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_ENUM at 76, len 1
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 05  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=70, obis=0.2.96.3.10.255, attr_id=3, value_type=16
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_ENUM at 89, len 1
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 06  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=70, obis=0.3.96.3.10.255, attr_id=3, value_type=16
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_ENUM at 102, len 1
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 01
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'1'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 1.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 07  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=70, obis=0.4.96.3.10.255, attr_id=3, value_type=16
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_ENUM at 115, len 1
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 08  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=1, obis=0.0.96.14.0.255, attr_id=2, value_type=09
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_OCTET_STRING at 129, len 2
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 54.31
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'T1'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 09  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 143, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.01.70
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'368'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 368.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 10  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.21.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 159, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.0B
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'11'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 11.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 11  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.41.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 175, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.01.51
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'337'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 337.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 12  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.61.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 191, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.14
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'20'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 20.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 13  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.2.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 207, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 14  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.22.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 223, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 15  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.42.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 239, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 16  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.62.7.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 255, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 17  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.8.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 271, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.52.A9
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'21161'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 21161.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 18  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.8.1.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 287, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.21.D9
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'8665'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 8665.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 19  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.8.2.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 303, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.30.D0
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'12496'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 12496.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 20  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.8.3.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 319, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 21  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.1.8.4.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 335, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.00.00
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'0'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 0.000000
+[13:20:52][I][dlms_cosem.axdr:288]: # 22  .................................................................................... 
+[13:20:52][I][dlms_cosem.axdr:290]: Found attribute descriptor: class_id=3, obis=1.0.2.8.0.255, attr_id=2, value_type=06
+[13:20:52][I][dlms_cosem.axdr:293]: Value type: DLMS_DATA_TYPE_UINT32 at 351, len 4
+[13:20:52][I][dlms_cosem.axdr:295]:  as hex dump : 00.00.09.03
+[13:20:52][I][dlms_cosem.axdr:296]:  as string   :'2307'
+[13:20:52][I][dlms_cosem.axdr:297]:  as number   : 2307.000000
+[13:20:52][I][dlms_cosem.axdr:505]: Fast parsing completed, processed 355 bytes

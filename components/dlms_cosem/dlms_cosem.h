@@ -1,29 +1,29 @@
 #pragma once
 
-#include "esphome/core/component.h"
-#include "esphome/components/uart/uart.h"
 #include "esphome/components/sensor/sensor.h"
+#include "esphome/components/uart/uart.h"
+#include "esphome/core/component.h"
 
 #ifdef USE_BINARY_SENSOR
 #include "esphome/components/binary_sensor/binary_sensor.h"
 #endif
 
 #include <cstdint>
-#include <string>
-#include <memory>
-#include <map>
 #include <list>
+#include <map>
+#include <memory>
+#include <string>
 
-#include "dlms_cosem_uart.h"
 #include "dlms_cosem_sensor.h"
+#include "dlms_cosem_uart.h"
 #include "object_locker.h"
 
 //##include "gxignore-arduino.h"
 
-#include <dlmssettings.h>
 #include <client.h>
-#include <cosem.h>
 #include <converters.h>
+#include <cosem.h>
+#include <dlmssettings.h>
 
 //#define IEC_HANDSHAKE
 
@@ -31,6 +31,7 @@ namespace esphome {
 namespace dlms_cosem {
 
 static const size_t DEFAULT_IN_BUF_SIZE = 256;
+static const size_t DEFAULT_IN_BUF_SIZE_PUSH = 2048;
 static const size_t MAX_OUT_BUF_SIZE = 128;
 
 using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
@@ -40,6 +41,10 @@ using ReadFunction = std::function<size_t()>;
 
 using DlmsRequestMaker = std::function<int()>;
 using DlmsResponseParser = std::function<int()>;
+
+struct CosemObject;
+
+using RegisterCosemObjectFunction = std::function<void(const CosemObject &object)>;
 
 class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
  public:
@@ -74,6 +79,9 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void set_reboot_after_failure(uint16_t number_of_failures) { this->failures_before_reboot_ = number_of_failures; }
   void set_cp1251_conversion_required(bool required) { this->cp1251_conversion_required_ = required; }
 
+  void set_push_mode(bool push_mode) { this->operation_mode_push_ = push_mode; }
+  void set_push_show_log(bool show_log) { this->push_show_log_ = show_log; }
+
   bool has_error{true};
 
 #ifdef USE_BINARY_SENSOR
@@ -91,6 +99,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   uint16_t server_address_{1};
   bool auth_required_{false};
   std::string password_{""};
+  bool operation_mode_push_{false};
+  bool push_show_log_{false};
 
   uint32_t receive_timeout_ms_{500};
   uint32_t delay_between_requests_ms_{50};
@@ -126,6 +136,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     DATA_NEXT,
     SESSION_RELEASE,
     DISCONNECT_REQ,
+    PUSH_DATA_PROCESS,  // Process received push data
     PUBLISH,
   } state_{State::NOT_INITIALIZED};
   State last_reported_state_{State::NOT_INITIALIZED};
@@ -151,17 +162,24 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void prepare_and_send_dlms_release();
   void prepare_and_send_dlms_disconnect();
 
+  void process_push_data();
+
   void send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResponseParser parser, State next_state,
                               bool mission_critical = false, bool clear_buffer = true);
 
   int set_sensor_scale_and_unit(DlmsCosemSensor *sensor);
   int set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis);
 
+  int set_sensor_value(uint16_t, const uint8_t *, uint8_t, DLMS_DATA_TYPE, const uint8_t *, uint8_t);
+
   void indicate_transmission(bool transmission_on);
   void indicate_session(bool session_on);
   void indicate_connection(bool connection_on);
 
-  // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state, uint8_t retries, bool mission_critical,
+  bool is_push_mode() const { return this->operation_mode_push_; }
+
+  // void read_reply_and_go_next_state_(ReadFunction read_fn, State next_state,
+  // uint8_t retries, bool mission_critical,
   //                                    bool check_crc);
   struct {
     ReadFunction read_fn;
@@ -206,7 +224,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
     gxReplyData reply;
 
-    void init();
+    void init(size_t default_in_buf_size);
     void reset();
     void check_and_grow_input(uint16_t more_data);
     // next function shows whether there are still messages to send
@@ -230,6 +248,9 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   size_t receive_frame_(FrameStopFunction stop_fn);
   size_t receive_frame_ascii_();
   size_t receive_frame_hdlc_();
+
+  size_t receive_frame_raw_();
+  uint32_t time_raw_limit_{0};
 
   inline void update_last_rx_time_() { this->last_rx_time_ = millis(); }
   bool check_wait_timeout_() { return millis() - wait_.start_time >= wait_.delay_ms; }
@@ -257,11 +278,13 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
   uint8_t failures_before_reboot_{0};
 
-  const char *dlms_error_to_string(int error);
-  const char *dlms_data_type_to_string(DLMS_DATA_TYPE vt);
+  //const char *dlms_error_to_string(int error);
 
   bool try_lock_uart_session_();
   void unlock_uart_session_();
+
+ public:
+  //static const char *dlms_data_type_to_string(DLMS_DATA_TYPE vt);
 
  private:
   static uint8_t next_obj_id_;

@@ -1,9 +1,9 @@
 
 #include "dlms_cosem.h"
+#include "axdr_parser.h"
 #include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
-
 #include <sstream>
 
 namespace esphome {
@@ -28,12 +28,13 @@ static constexpr uint8_t HDLC_FLAG = 0x7E;
 static const uint8_t CMD_ACK_SET_BAUD_AND_MODE[] = {ACK, '0', '5', '1', CR, LF};
 static const uint8_t CMD_CLOSE_SESSION[] = {SOH, 0x42, 0x30, ETX, 0x75};
 
-static constexpr uint8_t BOOT_WAIT_S = 15;  // 10;
+static constexpr uint8_t BOOT_WAIT_S = 10;
 
 static char empty_str[] = "";
 
 /*
-static char format_hex_char(uint8_t v) { return v >= 10 ? 'A' + (v - 10) : '0' + v; }
+static char format_hex_char(uint8_t v) { return v >= 10 ? 'A' + (v - 10) : '0' +
+v; }
 
 static std::string format_frame_pretty(const uint8_t *data, size_t length) {
   if (length == 0)
@@ -82,9 +83,8 @@ static std::string format_frame_pretty(const uint8_t *data, size_t length) {
         break;
       default:
         if (data[i] <= 0x20 || data[i] >= 0x7f) {
-          ss << "<" << format_hex_char((data[i] & 0xF0) >> 4) << format_hex_char(data[i] & 0x0F) << ">";
-        } else {
-          ss << (char) data[i];
+          ss << "<" << format_hex_char((data[i] & 0xF0) >> 4) <<
+format_hex_char(data[i] & 0x0F) << ">"; } else { ss << (char) data[i];
         }
         break;
     }
@@ -120,7 +120,9 @@ uint16_t DlmsCosemComponent::set_server_address(uint16_t logicalAddress, uint16_
                                                 unsigned char addressSize) {
   this->server_address_ = cl_getServerAddress(logicalAddress, physicalAddress, addressSize);
 
-  ESP_LOGD(TAG, "Server address = %d (based on logical_address=%d, physical_address=%d, address_size=%d)",
+  ESP_LOGD(TAG,
+           "Server address = %d (based on logical_address=%d, "
+           "physical_address=%d, address_size=%d)",
            this->server_address_, logicalAddress, physicalAddress, addressSize);
   return this->server_address_;
 }
@@ -149,7 +151,7 @@ void DlmsCosemComponent::setup() {
           this->auth_required_ ? DLMS_AUTHENTICATION_LOW : DLMS_AUTHENTICATION_NONE,
           this->auth_required_ ? this->password_.c_str() : NULL, DLMS_INTERFACE_TYPE_HDLC);
 
-  this->buffers_.init();
+  this->buffers_.init(this->is_push_mode() ? DEFAULT_IN_BUF_SIZE_PUSH : DEFAULT_IN_BUF_SIZE);
 
   this->indicate_transmission(false);
 
@@ -169,6 +171,22 @@ void DlmsCosemComponent::setup() {
   }
 
   this->set_baud_rate_(this->baud_rate_handshake_);
+
+  if (this->is_push_mode()) {
+    bool locked = false;
+    for (int i = 0; i < 3; i++)
+      if (this->try_lock_uart_session_()) {
+        locked = true;
+        break;
+      }
+
+    if (!locked) {
+      ESP_LOGE(TAG, "Failed to lock UART session. Aborting setup.");
+      this->mark_failed();
+      return;
+    }
+  }
+
   this->set_timeout(BOOT_WAIT_S * 1000, [this]() {
     ESP_LOGD(TAG, "Boot timeout, component is ready to use");
     this->clear_rx_buffers_();
@@ -198,7 +216,14 @@ void DlmsCosemComponent::register_sensor(DlmsCosemSensorBase *sensor) {
 }
 
 void DlmsCosemComponent::abort_mission_() {
-  // try close connection ?
+  if (this->is_push_mode()) {
+    ESP_LOGV(TAG, "Push mode error, returning to listening");
+    this->clear_rx_buffers_();
+    this->set_next_state_(State::IDLE);
+    return;
+  }
+
+  // Existing pull mode logic
   ESP_LOGE(TAG, "Abort mission. Closing session");
   this->set_next_state_(State::MISSION_FAILED);
 }
@@ -221,20 +246,47 @@ void DlmsCosemComponent::loop() {
   if (!this->is_ready() || this->state_ == State::NOT_INITIALIZED)
     return;
 
+  static bool hdlc_test = false;
+
   switch (this->state_) {
     case State::IDLE: {
       this->update_last_rx_time_();
-      this->indicate_transmission(false);
-      this->indicate_session(false);
+
+      if (!this->is_push_mode()) {
+        this->indicate_transmission(false);
+        this->indicate_session(false);
+      }
+
+      // Push mode listening logic
+      if (this->is_push_mode()) {
+        if (this->available() > 0) {
+          hdlc_test = false;
+          // Set up for receiving push data
+          memset(this->buffers_.in.data, 0, buffers_.in.capacity);
+          this->buffers_.in.size = 0;
+          // read what we can then move forward to avoid buffer overflow
+          this->receive_frame_raw_();
+          hdlc_test = this->buffers_.in.data[0] == HDLC_FLAG;
+
+          ESP_LOGV(TAG, "Push mode: incoming data detected");
+          this->stats_.connections_tried_++;
+          this->loop_state_.session_started_ms = millis();
+
+          this->indicate_transmission(true);
+
+          reading_state_.next_state = State::PUSH_DATA_PROCESS;
+          reading_state_.mission_critical = false;  // Never critical in push mode
+          this->set_next_state_(State::COMMS_RX);
+        }
+      }
     } break;
 
     case State::TRY_LOCK_BUS: {
       this->log_state_();
       if (this->try_lock_uart_session_()) {
         this->indicate_session(true);
-        this->set_next_state_(State::OPEN_SESSION);
         this->indicate_connection(true);
-
+        this->set_next_state_(State::OPEN_SESSION);
       } else {
         ESP_LOGV(TAG, "UART Bus is busy, waiting ...");
         this->set_next_state_delayed_(1000, State::TRY_LOCK_BUS);
@@ -262,16 +314,30 @@ void DlmsCosemComponent::loop() {
       this->log_state_();
 
       if (this->check_rx_timeout_()) {
-        ESP_LOGE(TAG, "RX timeout.");
-        this->has_error = true;
+        if (this->is_push_mode()) {
+          ESP_LOGI(TAG, "Push data reception completed (timeout reached)");
+        } else {
+          ESP_LOGE(TAG, "RX timeout.");
+          this->has_error = true;
+          this->dlms_reading_state_.last_error = DLMS_ERROR_CODE_HARDWARE_FAULT;
+          this->stats_.invalid_frames_ += reading_state_.err_invalid_frames;
+        }
 
         this->indicate_connection(false);
         this->indicate_transmission(false);
 
-        this->dlms_reading_state_.last_error = DLMS_ERROR_CODE_HARDWARE_FAULT;
-        this->stats_.invalid_frames_ += reading_state_.err_invalid_frames;
-        // if mission critical
-        if (reading_state_.mission_critical) {
+        if (this->is_push_mode()) {
+          // check if we received any data at all
+          this->indicate_connection(true);
+          if (this->buffers_.in.size > 0) {
+            ESP_LOGV(TAG, "Push mode RX data available, len =%d, processing", this->buffers_.in.size);
+            this->set_next_state_(State::PUSH_DATA_PROCESS);
+          } else {
+            ESP_LOGV(TAG, "Push mode RX timeout, returning to listening");
+            this->set_next_state_(State::IDLE);
+          }
+
+        } else if (reading_state_.mission_critical) {
           ESP_LOGE(TAG, "Mission critical RX timeout.");
           this->abort_mission_();
         } else {
@@ -282,7 +348,14 @@ void DlmsCosemComponent::loop() {
         return;
       }
 
-      // the folowing basic algorithm to be implemented to read DLMS packet
+      if (this->is_push_mode()) {
+        received_frame_size_ = this->receive_frame_raw_();
+        // this->update_last_rx_time_();
+        //  keep reading until timeout
+        return;
+      }
+
+      // the following basic algorithm to be implemented to read DLMS packet
       // first version, no retries
       // 1. receive proper hdlc frame
       // 2. get data from hdlc frame
@@ -303,19 +376,20 @@ void DlmsCosemComponent::loop() {
 
       auto ret = dlms_getData2(&dlms_settings_, &buffers_.in, &buffers_.reply, 0);
       if (ret != DLMS_ERROR_CODE_OK || buffers_.reply.complete == 0) {
-        ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, this->dlms_error_to_string(ret),
+        ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, dlms_error_to_string(ret),
                   buffers_.reply.complete);
       }
 
       if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
-        ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, this->dlms_error_to_string(ret));
+        ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, dlms_error_to_string(ret));
         this->reading_state_.err_invalid_frames++;
         this->set_next_state_(reading_state_.next_state);
         return;
       }
 
       if (buffers_.reply.complete == 0) {
-        ESP_LOGD(TAG, "DLMS Reply not complete, need more HDLC frames. Continue reading.");
+        ESP_LOGD(TAG, "DLMS Reply not complete, need more HDLC frames. "
+                      "Continue reading.");
         // data in multiple frames.
         // we just keep reading until full reply is received.
         return;  // keep reading
@@ -331,10 +405,12 @@ void DlmsCosemComponent::loop() {
         //        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
 
       } else {
-        ESP_LOGE(TAG, "DLMS parser fn error %d %s", parse_ret, this->dlms_error_to_string(parse_ret));
+        ESP_LOGE(TAG, "DLMS parser fn error %d %s", parse_ret, dlms_error_to_string(parse_ret));
 
-        // if not - just move forward
-        if (reading_state_.mission_critical) {
+        if (this->is_push_mode()) {
+          ESP_LOGV(TAG, "Push mode parse error, returning to listening");
+          this->set_next_state_(State::IDLE);
+        } else if (reading_state_.mission_critical) {
           this->abort_mission_();
         }
         // if not critical - just move forward
@@ -344,7 +420,9 @@ void DlmsCosemComponent::loop() {
 
     case State::MISSION_FAILED: {
       //  this->send_frame_(CMD_CLOSE_SESSION, sizeof(CMD_CLOSE_SESSION));
-      this->unlock_uart_session_();
+      if (!this->is_push_mode()) {
+        this->unlock_uart_session_();
+      }
       this->set_next_state_(State::IDLE);
       this->report_failure(true);
       this->stats_dump();
@@ -504,6 +582,15 @@ void DlmsCosemComponent::loop() {
       this->prepare_and_send_dlms_disconnect();
     } break;
 
+    case State::PUSH_DATA_PROCESS: {
+      this->log_state_();
+      ESP_LOGD(TAG, "Processing received push data");
+      this->loop_state_.sensor_iter = this->sensors_.begin();
+      this->set_next_state_(State::PUBLISH);
+      this->process_push_data();
+      this->clear_rx_buffers_();
+    } break;
+
     case State::PUBLISH: {
       this->log_state_();
       ESP_LOGD(TAG, "Publishing data");
@@ -520,7 +607,9 @@ void DlmsCosemComponent::loop() {
           this->crc_errors_per_session_sensor_->publish_state(this->stats_.crc_errors_per_session());
         }
         this->report_failure(false);
-        this->unlock_uart_session_();
+        if (!this->is_push_mode()) {
+          this->unlock_uart_session_();
+        }
         this->set_next_state_(State::IDLE);
         ESP_LOGD(TAG, "Total time: %u ms", millis() - this->loop_state_.session_started_ms);
       }
@@ -532,6 +621,11 @@ void DlmsCosemComponent::loop() {
 }
 
 void DlmsCosemComponent::update() {
+  if (this->is_push_mode()) {
+    // publish?
+    return;
+  }
+
   if (this->state_ != State::IDLE) {
     ESP_LOGD(TAG, "Starting data collection impossible - component not ready");
     return;
@@ -559,9 +653,9 @@ void DlmsCosemComponent::set_next_state_delayed_(uint32_t ms, State next_state) 
   }
 }
 
-void DlmsCosemComponent::InOutBuffers::init() {
+void DlmsCosemComponent::InOutBuffers::init(size_t default_in_buf_size) {
   BYTE_BUFFER_INIT(&in);
-  bb_capacity(&in, DEFAULT_IN_BUF_SIZE);
+  bb_capacity(&in, default_in_buf_size);
   mes_init(&out_msg);
   reply_init(&reply);
   this->reset();
@@ -604,7 +698,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
 void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, int type) {
   auto ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
   if (ret != DLMS_ERROR_CODE_OK) {
-    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, dlms_error_to_string(ret));
     this->set_next_state_(State::DATA_ENQ);
     return;
   }
@@ -626,7 +720,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, in
     ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
   }
   if (ret != DLMS_ERROR_CODE_OK) {
-    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, this->dlms_error_to_string(ret));
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, dlms_error_to_string(ret));
     this->set_next_state_(State::DATA_NEXT);
     return;
   }
@@ -690,12 +784,90 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
   set_next_state_(State::COMMS_TX);
 }
 
+void DlmsCosemComponent::process_push_data() {
+  ESP_LOGD(TAG, "Processing PUSH data frame with AXDR parser");
+
+  // Ensure we parse from the beginning of the collected frame
+  this->buffers_.in.position = 0;
+  const auto total_size = this->buffers_.in.size;
+  ESP_LOGD(TAG, "PUSH frame size: %u bytes", static_cast<unsigned>(total_size));
+
+  AttributeDescriptorCallback fn = [this](auto... args) { (void) this->set_sensor_value(args...); };
+
+  AxdrStreamParser axdr_parser(&this->buffers_.in, fn, this->push_show_log_);
+  size_t total_objects = 0;
+  size_t iterations = 0;
+
+  while (this->buffers_.in.position < this->buffers_.in.size) {
+    auto before = this->buffers_.in.position;
+    auto parsed_now = axdr_parser.parse();
+    auto after = this->buffers_.in.position;
+    iterations++;
+
+    if (parsed_now == 0 && after == before) {
+      // No progress, avoid potential infinite loop on malformed frames
+      ESP_LOGW(TAG, "AXDR parser made no progress at pos=%u/%u, aborting", static_cast<unsigned>(after),
+               static_cast<unsigned>(this->buffers_.in.size));
+      break;
+    }
+    total_objects += parsed_now;
+    ESP_LOGV(TAG, "AXDR iteration %u: parsed=%u, pos=%u/%u, objects_total=%u", static_cast<unsigned>(iterations),
+             static_cast<unsigned>(parsed_now), static_cast<unsigned>(after),
+             static_cast<unsigned>(this->buffers_.in.size), static_cast<unsigned>(total_objects));
+  }
+
+  ESP_LOGD(TAG, "PUSH data parsing complete: %u objects, bytes consumed %u/%u", static_cast<unsigned>(total_objects),
+           static_cast<unsigned>(this->buffers_.in.position), static_cast<unsigned>(total_size));
+}
+
+int DlmsCosemComponent::set_sensor_value(uint16_t class_id, const uint8_t *obis_code, uint8_t attribute_id,
+                                         DLMS_DATA_TYPE value_type, const uint8_t *value_buffer_ptr,
+                                         uint8_t value_length) {
+  static char obis_buf[32];
+  auto er = hlp_getLogicalNameToString(obis_code, obis_buf);
+
+  std::string obis_str(obis_buf);
+
+  auto range = this->sensors_.equal_range(obis_str);
+  int found_count = 0;
+  for (auto it = range.first; it != range.second; ++it) {
+    DlmsCosemSensorBase *sensor = it->second;
+    if (!sensor->shall_we_publish()) {
+      continue;
+    }
+    ESP_LOGD(TAG, "Found sensor for OBIS code %s: '%s' ", obis_buf, sensor->get_sensor_name().c_str());
+    found_count++;
+
+#ifdef USE_SENSOR
+    if (sensor->get_type() == SensorType::SENSOR) {
+      float val = dlms_data_as_float(value_type, value_buffer_ptr, value_length);
+      static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
+    }
+#endif
+
+#ifdef USE_TEXT_SENSOR
+    if (sensor->get_type() == SensorType::TEXT_SENSOR) {
+      auto val = dlms_data_as_string(value_type, value_buffer_ptr, value_length);
+      static_cast<DlmsCosemTextSensor *>(sensor)->set_value(val.c_str(), this->cp1251_conversion_required_);
+    }
+#endif
+  }
+
+  if (found_count == 0) {
+    ESP_LOGVV(TAG, "No sensor found for OBIS code: '%s'", (char *) obis_buf);
+  } else {
+    ESP_LOGVV(TAG, "Updated %d sensors for OBIS code: '%s'", found_count, (char *) obis_buf);
+  }
+
+  return DLMS_ERROR_CODE_OK;
+}
+
 int DlmsCosemComponent::set_sensor_scale_and_unit(DlmsCosemSensor *sensor) {
   ESP_LOGD(TAG, "set_sensor_scale_and_unit");
   if (!buffers_.reply.complete)
     return DLMS_ERROR_CODE_FALSE;
   auto vt = buffers_.reply.dataType;
-  ESP_LOGD(TAG, "DLMS_DATA_TYPE: %s (%d)", this->dlms_data_type_to_string(vt), vt);
+  ESP_LOGD(TAG, "DLMS_DATA_TYPE: %s (%d)", dlms_data_type_to_string(vt), vt);
   if (vt != 0) {
     return DLMS_ERROR_CODE_FALSE;
   }
@@ -714,7 +886,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
   }
 
   auto vt = buffers_.reply.dataType;
-  ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, this->dlms_data_type_to_string(vt), vt);
+  ESP_LOGD(TAG, "OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis, dlms_data_type_to_string(vt), vt);
 
   //      if (cosem_rr_.result().has_value()) {
   if (this->dlms_reading_state_.last_error == DLMS_ERROR_CODE_OK) {
@@ -735,7 +907,8 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
           static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
         }
       } else {
-        ESP_LOGW(TAG, "Wrong OBIS class. Regular numberic sensors can only handle Registers (class = 3)");
+        ESP_LOGW(TAG, "Wrong OBIS class. Regular numberic sensors can only "
+                      "handle Registers (class = 3)");
       }
     }
 
@@ -848,7 +1021,9 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
     // this->buffers_.amount_in++;
 
     if (stop_fn(this->buffers_.in.data, this->buffers_.in.size)) {
-      //      ESP_LOGVV(TAG, "RX: %s", format_frame_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
+      //      ESP_LOGVV(TAG, "RX: %s",
+      //      format_frame_pretty(this->buffers_.in.data,
+      //      this->buffers_.in.size).c_str());
       ESP_LOGVV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
       ret_val = this->buffers_.in.size;
 
@@ -867,12 +1042,16 @@ size_t DlmsCosemComponent::receive_frame_hdlc_() {
   // HDLC frame: <FLAG>data<FLAG>
   auto frame_end_check_hdlc = [](uint8_t *b, size_t s) {
     auto ret = s >= 2 && b[0] == HDLC_FLAG && b[s - 1] == HDLC_FLAG;
-    // if (ret) {
-    //   ESP_LOGVV(TAG, "Frame HDLC Stop");
-    // }
     return ret;
   };
   return receive_frame_(frame_end_check_hdlc);
+}
+
+size_t DlmsCosemComponent::receive_frame_raw_() {
+  auto frame_end_check_timeout = [](uint8_t *b, size_t s) {
+    return false; // never stop by content, only by timeout
+  };
+  return receive_frame_(frame_end_check_timeout);
 }
 
 #ifdef IEC_HANDSHAKE
@@ -904,6 +1083,7 @@ void DlmsCosemComponent::clear_rx_buffers_() {
   }
   memset(this->buffers_.in.data, 0, buffers_.in.capacity);
   this->buffers_.in.size = 0;
+  this->buffers_.in.position = 0;
 }
 
 const char *DlmsCosemComponent::state_to_string(State state) {
@@ -946,6 +1126,8 @@ const char *DlmsCosemComponent::state_to_string(State state) {
       return "DISCONNECT_REQ";
     case State::PUBLISH:
       return "PUBLISH";
+    case State::PUSH_DATA_PROCESS:
+      return "PUSH_DATA_PROCESS";
     default:
       return "UNKNOWN";
   }
@@ -974,82 +1156,6 @@ void DlmsCosemComponent::stats_dump() {
   ESP_LOGV(TAG, "============================================");
 }
 
-const char *DlmsCosemComponent::dlms_error_to_string(int error) {
-  switch (error) {
-    case DLMS_ERROR_CODE_OK:
-      return "DLMS_ERROR_CODE_OK";
-    case DLMS_ERROR_CODE_HARDWARE_FAULT:
-      return "DLMS_ERROR_CODE_HARDWARE_FAULT";
-    case DLMS_ERROR_CODE_TEMPORARY_FAILURE:
-      return "DLMS_ERROR_CODE_TEMPORARY_FAILURE";
-    case DLMS_ERROR_CODE_READ_WRITE_DENIED:
-      return "DLMS_ERROR_CODE_READ_WRITE_DENIED";
-    case DLMS_ERROR_CODE_UNDEFINED_OBJECT:
-      return "DLMS_ERROR_CODE_UNDEFINED_OBJECT";
-    case DLMS_ERROR_CODE_ACCESS_VIOLATED:
-      return "DLMS_ERROR_CODE_ACCESS_VIOLATED";
-    default:
-      return "";
-  }
-}
-
-const char *DlmsCosemComponent::dlms_data_type_to_string(DLMS_DATA_TYPE vt) {
-  switch (vt) {
-    case DLMS_DATA_TYPE_NONE:
-      return "DLMS_DATA_TYPE_NONE";
-    case DLMS_DATA_TYPE_BOOLEAN:
-      return "DLMS_DATA_TYPE_BOOLEAN";
-    case DLMS_DATA_TYPE_BIT_STRING:
-      return "DLMS_DATA_TYPE_BIT_STRING";
-    case DLMS_DATA_TYPE_INT32:
-      return "DLMS_DATA_TYPE_INT32";
-    case DLMS_DATA_TYPE_UINT32:
-      return "DLMS_DATA_TYPE_UINT32";
-    case DLMS_DATA_TYPE_OCTET_STRING:
-      return "DLMS_DATA_TYPE_OCTET_STRING";
-    case DLMS_DATA_TYPE_STRING:
-      return "DLMS_DATA_TYPE_STRING";
-    case DLMS_DATA_TYPE_BINARY_CODED_DESIMAL:
-      return "DLMS_DATA_TYPE_BINARY_CODED_DESIMAL";
-    case DLMS_DATA_TYPE_STRING_UTF8:
-      return "DLMS_DATA_TYPE_STRING_UTF8";
-    case DLMS_DATA_TYPE_INT8:
-      return "DLMS_DATA_TYPE_INT8";
-    case DLMS_DATA_TYPE_INT16:
-      return "DLMS_DATA_TYPE_INT16";
-    case DLMS_DATA_TYPE_UINT8:
-      return "DLMS_DATA_TYPE_UINT8";
-    case DLMS_DATA_TYPE_UINT16:
-      return "DLMS_DATA_TYPE_UINT16";
-    case DLMS_DATA_TYPE_INT64:
-      return "DLMS_DATA_TYPE_INT64";
-    case DLMS_DATA_TYPE_UINT64:
-      return "DLMS_DATA_TYPE_UINT64";
-    case DLMS_DATA_TYPE_ENUM:
-      return "DLMS_DATA_TYPE_ENUM";
-    case DLMS_DATA_TYPE_FLOAT32:
-      return "DLMS_DATA_TYPE_FLOAT32";
-    case DLMS_DATA_TYPE_FLOAT64:
-      return "DLMS_DATA_TYPE_FLOAT64";
-    case DLMS_DATA_TYPE_DATETIME:
-      return "DLMS_DATA_TYPE_DATETIME";
-    case DLMS_DATA_TYPE_DATE:
-      return "DLMS_DATA_TYPE_DATE";
-    case DLMS_DATA_TYPE_TIME:
-      return "DLMS_DATA_TYPE_TIME";
-    case DLMS_DATA_TYPE_ARRAY:
-      return "DLMS_DATA_TYPE_ARRAY";
-    case DLMS_DATA_TYPE_STRUCTURE:
-      return "DLMS_DATA_TYPE_STRUCTURE";
-    case DLMS_DATA_TYPE_COMPACT_ARRAY:
-      return "DLMS_DATA_TYPE_COMPACT_ARRAY";
-    case DLMS_DATA_TYPE_BYREF:
-      return "DLMS_DATA_TYPE_BYREF";
-    default:
-      return "DMS_DATA_TYPE UNKNOWN";
-  }
-}
-
 bool DlmsCosemComponent::try_lock_uart_session_() {
   if (AnyObjectLocker::try_lock(this->parent_)) {
     ESP_LOGV(TAG, "UART bus %p locked by %s", this->parent_, this->tag_.c_str());
@@ -1067,6 +1173,455 @@ void DlmsCosemComponent::unlock_uart_session_() {
 uint8_t DlmsCosemComponent::next_obj_id_ = 0;
 
 std::string DlmsCosemComponent::generateTag() { return str_sprintf("%s%03d", TAG0, ++next_obj_id_); }
+
+// bool ApduParser::is_numeric_type(DLMS_DATA_TYPE type) {
+//   return type == DLMS_DATA_TYPE_BOOLEAN || type == DLMS_DATA_TYPE_INT32 || type == DLMS_DATA_TYPE_UINT32 ||
+//          type == DLMS_DATA_TYPE_INT8 || type == DLMS_DATA_TYPE_INT16 || type == DLMS_DATA_TYPE_UINT8 ||
+//          type == DLMS_DATA_TYPE_UINT16 || type == DLMS_DATA_TYPE_INT64 || type == DLMS_DATA_TYPE_UINT64 ||
+//          type == DLMS_DATA_TYPE_ENUM || type == DLMS_DATA_TYPE_FLOAT32 || type == DLMS_DATA_TYPE_FLOAT64;
+//   //  // ||
+//   //  type == DLMS_DATA_TYPE_DELTA_INT8 ||
+//   //  type == DLMS_DATA_TYPE_DELTA_INT16 ||
+//   //  type == DLMS_DATA_TYPE_DELTA_INT32 ||
+//   //  type == DLMS_DATA_TYPE_DELTA_UINT8 ||
+//   //  type == DLMS_DATA_TYPE_DELTA_UINT16 ||
+//   //  type == DLMS_DATA_TYPE_DELTA_UINT32;
+// }
+
+// float ApduParser::read_numeric_to_float(DLMS_DATA_TYPE type) {
+//   float val = 0;
+//   auto type_size = hlp_getDataTypeSize(type);
+//   if (type_size <= 0) {
+//     ESP_LOGE(TAG, "Type %d has variable size, cannot read as float", (uint8_t) type);
+//     return val;
+//   }
+
+//   if (this->buffer->position + type_size > this->buffer->size) {
+//     ESP_LOGE(TAG, "Not enough data to read type %d as float", type);
+//     return val;
+//   }
+
+//   switch (type) {
+//       // one byte unsigned
+//     case DLMS_DATA_TYPE_BOOLEAN:
+//     case DLMS_DATA_TYPE_UINT8:
+//     case DLMS_DATA_TYPE_ENUM:
+//       // case DLMS_DATA_TYPE_DELTA_UINT8:
+//       {
+//         uint8_t b1 = read_byte();
+//         val = static_cast<float>(b1);
+//       }
+//       break;
+
+//     // one byte signed
+//     case DLMS_DATA_TYPE_INT8:
+//       // case DLMS_DATA_TYPE_DELTA_INT8:
+//       {
+//         int8_t b1 = static_cast<int8_t>(read_byte());
+//         val = static_cast<float>(b1);
+//       }
+//       break;
+
+//     // two byte unsigned
+//     case DLMS_DATA_TYPE_UINT16:
+//       // case DLMS_DATA_TYPE_DELTA_UINT16:
+//       {
+//         uint16_t uint16Value = read_u16();
+//         val = static_cast<float>(uint16Value);
+//       }
+//       break;
+
+//     // two byte signed
+//     case DLMS_DATA_TYPE_INT16:
+//       // case DLMS_DATA_TYPE_DELTA_INT16:
+//       {
+//         uint16_t uint16Value = read_u16();
+//         int16_t int16Value = static_cast<int16_t>(uint16Value);
+//         val = static_cast<float>(int16Value);
+//       }
+//       break;
+
+//     // four byte unsigned
+//     case DLMS_DATA_TYPE_UINT32:
+//       // case DLMS_DATA_TYPE_DELTA_UINT32:
+//       {
+//         uint32_t uint32Value = read_u32();
+//         val = static_cast<float>(uint32Value);
+//       }
+//       break;
+
+//     // four byte signed
+//     case DLMS_DATA_TYPE_INT32:
+//       // case DLMS_DATA_TYPE_DELTA_INT32:
+//       {
+//         uint32_t uint32Value = read_u32();
+//         int32_t int32Value = static_cast<int32_t>(uint32Value);
+//         val = static_cast<float>(int32Value);
+//       }
+//       break;
+
+//     case DLMS_DATA_TYPE_UINT64:
+//     case DLMS_DATA_TYPE_INT64: {
+//       uint64_t raw = 0;
+//       for (int i = 0; i < 8; i++) {
+//         raw = (raw << 8) | read_byte();
+//       }
+//       if (type == DLMS_DATA_TYPE_UINT64)
+//         val = static_cast<float>(raw);
+//       else
+//         val = static_cast<float>((int64_t) raw);
+//     } break;
+
+//     case DLMS_DATA_TYPE_FLOAT32: {
+//       uint32_t raw = read_u32();
+//       float f{};
+//       if (sizeof(float) == 4) {
+//         std::memcpy(&f, &raw, sizeof(float));
+//         val = f;
+//       } else {
+//         ESP_LOGW(TAG, "Float size is not 4 bytes on this platform!");
+//       }
+//     } break;
+
+//     case DLMS_DATA_TYPE_FLOAT64: {
+//       uint64_t raw = 0;
+//       for (int i = 0; i < 8; i++) {
+//         raw = (raw << 8) | read_byte();
+//       }
+//       if (sizeof(double) == 8) {
+//         double d{};
+//         std::memcpy(&d, &raw, sizeof(double));
+//         val = static_cast<float>(d);
+//       } else {
+//         ESP_LOGW(TAG, "Double size is not 8 bytes on this platform!");
+//       }
+//     } break;
+
+//     default:
+//       ESP_LOGE(TAG, "Unsupported numeric type: %d at position %d", (uint8_t) (type), this->buffer->position);
+//   }
+
+//   return val;
+// }
+
+// uint8_t ApduParser::peek_byte() {
+//   if (this->buffer->position + 1 > this->buffer->size) {
+//     ESP_LOGE(TAG, "Buffer overflow in read_byte at position %d", this->buffer->position);
+//     return 0xFF;
+//   }
+//   // ESP_LOGVV(TAG, "Peek [%04d]: %02X", this->buffer->position, this->buffer->data[this->buffer->position]);
+//   return this->buffer->data[this->buffer->position];
+// }
+
+// uint8_t ApduParser::read_byte() {
+//   if (this->buffer->position + 1 > this->buffer->size) {
+//     ESP_LOGE(TAG, "Buffer overflow in read_byte at position %d", this->buffer->position);
+//     return 0xFF;
+//   }
+//   // ESP_LOGVV(TAG, "Read [%04d]: %02X", this->buffer->position, this->buffer->data[this->buffer->position]);
+//   return this->buffer->data[this->buffer->position++];
+// }
+
+// uint16_t ApduParser::read_u16() {
+//   if (this->buffer->position + 2 > this->buffer->size) {
+//     ESP_LOGE(TAG, "Buffer overflow in read_u16 at position %d", this->buffer->position);
+//     return 0;
+//   }
+//   uint16_t value = (this->buffer->data[this->buffer->position] << 8) | this->buffer->data[this->buffer->position +
+//   1]; this->buffer->position += 2; return value;
+// }
+
+// uint32_t ApduParser::read_u32() {
+//   if (this->buffer->position + 4 > this->buffer->size) {
+//     ESP_LOGE(TAG, "Buffer overflow in read_u32 at position %d", this->buffer->position);
+//     return 0;
+//   }
+//   uint32_t value =
+//       (this->buffer->data[this->buffer->position] << 24) | (this->buffer->data[this->buffer->position + 1] << 16) |
+//       (this->buffer->data[this->buffer->position + 2] << 8) | this->buffer->data[this->buffer->position + 3];
+//   this->buffer->position += 4;
+//   return value;
+// }
+
+// bool ApduParser::read_obis_bytes(uint8_t *dest_string, const size_t dest_size) {
+//   if (this->buffer->position + 6 > this->buffer->size) {
+//     return false;
+//   }
+//   uint8_t a = read_byte();
+//   uint8_t b = read_byte();
+//   uint8_t c = read_byte();
+//   uint8_t d = read_byte();
+//   uint8_t e = read_byte();
+//   uint8_t f = read_byte();
+//   if (dest_string != nullptr && dest_size > 0) {
+//     snprintf((char *) dest_string, dest_size, "%d.%d.%d.%d.%d.%d\0", a, b, c, d, e, f);
+//   }
+//   return true;
+// }
+
+// size_t ApduParser::test_if_date_time() {
+//   // only 12 bytes for now
+
+//   if (this->buffer->position + 12 > this->buffer->size) {
+//     return 0;
+//   }
+
+//   const uint8_t *buf = this->buffer->data + this->buffer->position;
+//   if (!buf)
+//     return 0;
+
+//   // Year
+//   uint16_t year = (buf[0] << 8) | buf[1];
+//   if (!(year == 0x0000 || (year >= 1970 && year <= 2100)))
+//     return 0;
+
+//   // Month
+//   uint8_t month = buf[2];
+//   if (!(month == 0xFF || (month >= 1 && month <= 12)))
+//     return 0;
+
+//   // Day of month
+//   uint8_t day = buf[3];
+//   if (!(day == 0xFF || (day >= 1 && day <= 31)))
+//     return 0;
+
+//   // Day of week
+//   uint8_t dow = buf[4];
+//   if (!(dow == 0xFF || (dow >= 1 && dow <= 7)))
+//     return 0;
+
+//   // Hour
+//   uint8_t hour = buf[5];
+//   if (!(hour == 0xFF || hour <= 23))
+//     return 0;
+
+//   // Minute
+//   uint8_t minute = buf[6];
+//   if (!(minute == 0xFF || minute <= 59))
+//     return 0;
+
+//   // Second
+//   uint8_t second = buf[7];
+//   if (!(second == 0xFF || second <= 59))
+//     return 0;
+
+//   // Hundredths of second
+//   uint16_t ms = (buf[8] << 8) | buf[9];
+//   if (!(ms == 0xFFFF || ms <= 99))
+//     return 0;
+
+//   // Deviation (timezone offset, signed, 2 bytes)
+//   uint16_t u_dev = buf[10] | (buf[11] << 8);
+//   int16_t s_dev = (int16_t) (u_dev);
+//   if (!(s_dev == (int16_t) 0x8000 || (s_dev >= -720 && s_dev <= 720)))
+//     return 0;
+
+//   return 12;
+// }
+
+// bool ApduParser::scan_cosem_objects(uint8_t lvl, DLMS_DATA_TYPE parent_type, uint8_t idx_in_structure) {
+//   if (this->buffer->position >= this->buffer->size) {
+//     ESP_LOGE(TAG, "Buffer overflow in scan_cosem_objects at position %d, level %d, parent type %d",
+//              this->buffer->position, lvl, parent_type);
+//     return false;
+//   }
+
+//   DLMS_DATA_TYPE type = (DLMS_DATA_TYPE) read_byte();
+
+//   ESP_LOGVV(TAG, "Position %d: Found type %s (%d). Lvl %d", this->buffer->position - 1,
+//   dlms_data_type_to_string(type),
+//             (int) type, lvl);
+
+//   if (type == DLMS_DATA_TYPE_NONE) {
+//     // ZPA AM375 sends structures with no elements, just a NONE type then goes attribute descriptor
+//     // Cosem object := {Attribute descriptor, Value}
+//     // Attribute descriptor: := <NULL>, OBIS code, ATTR, VALUE
+//     // Value: := <NONE> | <simple type> | <array> | <structure> | <enum>
+//     if (idx_in_structure == 0 && parent_type == DLMS_DATA_TYPE_STRUCTURE) {
+//       object.class_id = read_byte();
+//       uint8_t a = read_byte();
+//       uint8_t b = read_byte();
+//       uint8_t c = read_byte();
+//       uint8_t d = read_byte();
+//       uint8_t e = read_byte();
+//       uint8_t f = read_byte();
+//       snprintf((char *) object.obis_code, sizeof(object.obis_code), "%d.%d.%d.%d.%d.%d\0", a, b, c, d, e, f);
+//       object.attribute = read_byte();
+//       object.octet_obis_detected = true;
+//       object.lvl_when_obis_detected = lvl;
+//       ESP_LOGI(TAG, "Found COSEM object: class=%d, obis=%s, attr=%d", object.class_id, (char *) object.obis_code,
+//                object.attribute);
+//       // Now read the value
+//     }
+
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_ARRAY) {
+//     // simple iteration
+//     uint8_t elements_count = read_byte();
+//     while (elements_count-- > 0) {
+//       if (!scan_cosem_objects(lvl + 1, type))
+//         return false;
+//     }
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_STRUCTURE) {
+//     // here be dragons!!!
+//     // since we never know we need to guess
+//     //
+//     //
+//     //
+//     uint8_t elements_count = read_byte();
+//     if (elements_count == 0) {
+//       printf("Structure with zero elements at position %d", this->buffer->position);
+//       return true;
+//     }
+//     uint8_t peek_first_object_type = peek_byte();
+//     uint8_t peek_object_type;
+//     for (uint8_t i = 0; i < elements_count; i++) {
+//       peek_object_type = peek_byte();
+//       if (!scan_cosem_objects(lvl + 1, type, i))
+//         return false;
+//     }
+//     if (this->object.octet_obis_detected && this->object.lvl_when_obis_detected - 1 == lvl) {
+//       // we had detected OBIS code in octet string, so we can assume this is a COSEM object
+//       peek_first_object_type = DLMS_DATA_TYPE_NONE;
+//     }
+
+//     if (peek_first_object_type == DLMS_DATA_TYPE_NONE) {
+//       // we have just read a structure/array that contains COSEM object(s)
+//       printf(
+//           "Completed reading COSEM object: class=%d, obis=%s, attr=%d, value type=%s (%d), numeric val=%f,
+//           str='%s'\n", object.class_id, (char *) object.obis_code, object.attribute,
+//           dlms_data_type_to_string(object.value_type), (int) object.value_type, object.value_numeric,
+//           object.value_str.c_str());
+//       // TODO: we might want to check attribute 2 or 3 and do some actions
+
+//       this->objects_found++;
+//       if (this->register_object_fn_) {
+//         this->register_object_fn_(this->object);
+//       }
+//       this->object.reset();
+//     }
+
+//     return true;
+//   } else if (is_numeric_type(type)) {
+//     this->object.value_type = type;
+//     this->object.value_numeric = read_numeric_to_float(type);
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_OCTET_STRING || type == DLMS_DATA_TYPE_STRING ||
+//              type == DLMS_DATA_TYPE_STRING_UTF8) {
+//     this->object.value_type = type;
+//     uint8_t len = read_byte();
+//     // OBIS code is often sent as octet string of length 6 inside a structure
+//     if (len == 6 && type == DLMS_DATA_TYPE_OCTET_STRING && parent_type == DLMS_DATA_TYPE_STRUCTURE &&
+//         this->object.obis_code[0] == 0) {
+//       uint8_t a = read_byte();
+//       uint8_t b = read_byte();
+//       uint8_t c = read_byte();
+//       uint8_t d = read_byte();
+//       uint8_t e = read_byte();
+//       uint8_t f = read_byte();
+//       snprintf((char *) object.obis_code, sizeof(object.obis_code), "%d.%d.%d.%d.%d.%d\0", a, b, c, d, e, f);
+//       this->object.octet_obis_detected = true;
+//       this->object.lvl_when_obis_detected = lvl;
+//     } else {
+//       this->object.value_str =
+//           std::string(this->buffer->data + this->buffer->position, this->buffer->data + this->buffer->position +
+//           len);
+//       this->buffer->position += len;
+//     }
+
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_BIT_STRING) {
+//     this->object.value_type = type;
+//     // length of the bit string
+//     uint8_t len = read_byte();
+//     // Calculate bytes needed to hold the bits
+//     uint8_t bytes_needed = (len + 7) / 8;
+//     while (bytes_needed-- > 0) {
+//       read_byte();  // Just consume the bytes for now
+//     }
+//     ESP_LOGW(TAG, "Bit string not yet supported. Bit length %d bits", static_cast<int>(len));
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_COMPACT_ARRAY) {
+//     this->object.value_type = type;
+//     uint8_t len = read_byte();
+//     while (len-- > 0) {
+//       read_byte();  // Just consume the bytes for now
+//     }
+//     ESP_LOGW(TAG, "Compact Array type not yet supported.");
+//     return true;
+//   } else if (type == DLMS_DATA_TYPE_DATETIME || type == DLMS_DATA_TYPE_DATE || type == DLMS_DATA_TYPE_TIME) {
+//     this->object.value_type = type;
+//     uint8_t len = read_byte();
+//     while (len-- > 0) {
+//       read_byte();  // Just consume the bytes for now
+//     }
+//     return true;
+//   } else {
+//     // here be dragons
+//     ESP_LOGE(TAG, "Unknown data type. Parsing failed. %d at position %d", static_cast<int>(type),
+//              this->buffer->position);
+//     return false;
+//   }
+//   if (this->buffer->position == this->buffer->size) {
+//     ESP_LOGD(TAG, "End of buffer reached in scan_cosem_objects at position %d, level %d, parent type %d",
+//              this->buffer->position, lvl, parent_type);
+//     return true;
+//   }
+
+//   /*
+//   // else if (type == DLMS_DATA_TYPE_BINARY_CODED_DECIMAL) {
+//   //   this->object.value_type = type;
+//   //   uint8_t len = read_byte();
+//   //   //    std::vector<uint8_t> bcdData = readBytes(len);
+//   //   std::stringstream ss;
+//   //   for (uint8_t i = 0; i < len; i++) {
+//   //     ss << std::hex << std::setw(2) << std::setfill('0')
+//   //        << static_cast<int>(this->buffer->data[this->buffer->position + i]);
+//   //   }
+//   //   this->object.value_str = ss.str();
+//   //   uint32_t value32 = std::stoul(this->object.value_str, nullptr, 10);
+//   //   this->object.numeric_value = static_cast<float>(value32);
+//   //   return true;
+//   */
+//   return false;
+// }
+
+// size_t ApduParser::parse() {
+//   static const size_t minimum_push_frame_size = 1 + 4 + 1 + 2;
+//   // flag +
+//   // invoke id +
+//   // priority +
+//   // [optional] datetime
+//   // at least one empty structure/array
+
+//   uint8_t flag = 0;
+
+//   // skip to notification flag
+//   while (this->buffer->position < this->buffer->size) {
+//     flag = read_byte();
+//     if (flag == 0x0F)
+//       break;
+//   }
+
+//   if (flag != 0x0F) {
+//     ESP_LOGE(TAG, "No push notification flag found in the frame");
+//     return 0;
+//   }
+
+//   if (this->buffer->position + minimum_push_frame_size >= this->buffer->size) {
+//     ESP_LOGV(TAG, "Push notification frame too short: %d bytes", this->buffer->size);
+//     return 0;
+//   }
+//   uint32_t invoke_id = read_u32();
+//   uint8_t priority = read_byte();
+
+//   // sometimes there is a DateTime object here, sometimes not
+//   size_t date_time_to_skip = test_if_date_time();
+//   this->buffer->position += date_time_to_skip;
+
+//   this->scan_cosem_objects();
+// }
 
 }  // namespace dlms_cosem
 }  // namespace esphome
