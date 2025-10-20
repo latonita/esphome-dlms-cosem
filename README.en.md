@@ -6,7 +6,8 @@
 [Energomera CE](https://github.com/latonita/esphome-energomera-ce) •
 [SPb ZIP CE2727A](https://github.com/latonita/esphome-ce2727a-meter) •
 [Lenelektro LE-2](https://github.com/latonita/esphome-le2-meter) •
-[Pulsar-M](https://github.com/latonita/esphome-pulsar-m)
+[Pulsar-M](https://github.com/latonita/esphome-pulsar-m) •
+[Energomera BLE](https://github.com/latonita/esphome-energomera-ble)
 
 # esphome-dlms-cosem
 ESPHome integration for DLMS/COSEM (SPODES) electricity meters (Energomera CE207/CE307/CE308, Milur 107S, MIR, Nartis, RiM, Pulsar, ZPA AM375 and many others) via RS‑485 or optical port (*).
