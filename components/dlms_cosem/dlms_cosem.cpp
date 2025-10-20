@@ -156,11 +156,7 @@ void DlmsCosemComponent::setup() {
 
   this->indicate_transmission(false);
 
-#ifdef USE_ESP32_FRAMEWORK_ARDUINO
-  iuart_ = make_unique<DlmsCosemUart>(*static_cast<uart::ESP32ArduinoUARTComponent *>(this->parent_));
-#endif
-
-#ifdef USE_ESP_IDF
+#ifdef USE_ESP32
   iuart_ = make_unique<DlmsCosemUart>(*static_cast<uart::IDFUARTComponent *>(this->parent_));
 #endif
 
