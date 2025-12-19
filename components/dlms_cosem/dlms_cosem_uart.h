@@ -135,8 +135,16 @@ class DlmsCosemUart final : public uart::IDFUARTComponent {
       data++;
       this->has_peek_ = false;
     }
-    if (length_to_read > 0)
-      uart_read_bytes(this->iuart_num_, data, length_to_read, 20 / portTICK_PERIOD_MS);
+    if (length_to_read > 0) {
+      // If no valid hardware UART, fall back to base read_array (e.g., BLE-backed UART)
+      if (this->iuart_num_ < UART_NUM_0 || this->iuart_num_ >= UART_NUM_MAX) {
+        if (!uart_.read_array(data, length_to_read)) {
+          return false;
+        }
+      } else {
+        uart_read_bytes(this->iuart_num_, data, length_to_read, 20 / portTICK_PERIOD_MS);
+      }
+    }
     
     if (locked) {
       xSemaphoreGive(lock);
