@@ -265,6 +265,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     bool has_more_messages_to_send() const { return out_msg_index < out_msg.size; }
 
     gxRegister gx_register;
+    gxClock gx_clock;
     unsigned char gx_attribute{2};
 
   } buffers_;

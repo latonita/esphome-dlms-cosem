@@ -805,7 +805,9 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obi
 
 void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, int type, bool reg_init) {
   int ret = DLMS_ERROR_CODE_OK;
-  if (reg_init) {
+  if (type == DLMS_OBJECT_TYPE_CLOCK) {
+    ret = cosem_init(BASE(this->buffers_.gx_clock), (DLMS_OBJECT_TYPE) type, obis);
+  } else if (reg_init) {
     ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
   }
   if (ret != DLMS_ERROR_CODE_OK) {
@@ -814,13 +816,19 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, in
     return;
   }
 
-  auto make = [this]() {
-    return cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
-                   &this->buffers_.out_msg);
+  auto make = [this, type]() {
+    return (type == DLMS_OBJECT_TYPE_CLOCK)
+               ? cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_clock), this->buffers_.gx_attribute,
+                         &this->buffers_.out_msg)
+               : cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                         &this->buffers_.out_msg);
   };
-  auto parse = [this]() {
-    return cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
-                          &this->buffers_.reply.dataValue);
+  auto parse = [this, type]() {
+    return (type == DLMS_OBJECT_TYPE_CLOCK)
+               ? cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_clock), this->buffers_.gx_attribute,
+                                &this->buffers_.reply.dataValue)
+               : cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
+                                &this->buffers_.reply.dataValue);
   };
   this->send_dlms_req_and_next(make, parse, State::DATA_RECV);
 }
@@ -1012,6 +1020,20 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 
 #ifdef USE_TEXT_SENSOR
     if (sensor->get_type() == SensorType::TEXT_SENSOR) {
+      if (object_class == DLMS_OBJECT_TYPE_CLOCK) {
+        static char obis_datetime_str[32];
+        auto clock_gx_time = &this->buffers_.gx_clock.time;
+        auto dt = clock_gx_time->value;
+        time_t t = (time_t) dt;
+        struct tm tm_val;
+        localtime_r(&t, &tm_val);
+        strftime(obis_datetime_str, sizeof(obis_datetime_str), "%Y-%m-%d %H:%M:%S", &tm_val);
+
+        ESP_LOGD(TAG, "OBIS code: %s, Clock: %s", obis, obis_datetime_str);
+        static_cast<DlmsCosemTextSensor *>(sensor)->set_value(obis_datetime_str, this->cp1251_conversion_required_);
+        return this->dlms_reading_state_.last_error;
+      }
+
       auto var = &this->buffers_.gx_register.value;
       if (var && var->byteArr && var->byteArr->size > 0) {
         auto arr = var->byteArr;
@@ -1027,17 +1049,12 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 
         if ((object_class == DLMS_OBJECT_TYPE_DATA) || (object_class == DLMS_OBJECT_TYPE_REGISTER) ||
             (object_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
-          if (vt == DLMS_DATA_TYPE_DATETIME) {
-            auto data_as_string = dlms_data_as_string(vt, arr->data, arr->size);
-            static_cast<DlmsCosemTextSensor *>(sensor)->set_value(data_as_string.c_str(),
-                                                                  this->cp1251_conversion_required_);
-          } else {
-            static_cast<DlmsCosemTextSensor *>(sensor)->set_value(reinterpret_cast<const char *>(arr->data),
-                                                                  this->cp1251_conversion_required_);
-          }
+          auto data_as_string = dlms_data_as_string(vt, arr->data, arr->size);
+          static_cast<DlmsCosemTextSensor *>(sensor)->set_value(data_as_string.c_str(),
+                                                                this->cp1251_conversion_required_);
         } else {
-          ESP_LOGW(TAG, "Wrong OBIS class. We can only handle Data (class 1), Registers (class = 3) and Extended "
-                        "Registers (class = 4)");
+          ESP_LOGW(TAG, "Wrong OBIS class. We can only handle Data (class 1), Registers (class = 3), Extended "
+                        "Registers (class = 4), and Clock (class = 8) for text sensors.");
         }
       }
     }
