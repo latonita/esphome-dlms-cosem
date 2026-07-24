@@ -454,9 +454,20 @@ void DlmsCosemComponent::handle_comms_rx_() {
       ESP_LOGE(TAG, "Mission critical RX timeout.");
       this->abort_mission_();
     } else {
-      // if not move forward
       reading_state_.err_invalid_frames++;
-      this->set_next_state_(reading_state_.next_state);
+      // A data-phase read that times out leaves the HDLC/DLMS sequence desynced; if we just
+      // move to the next sensor, every later (even perfect) reply is judged "not complete"
+      // and the whole cycle is wasted. Tear the session down cleanly (SESSION_RELEASE ->
+      // DISCONNECT -> PUBLISH still publishes whatever was already read) and reconnect fresh
+      // next cycle instead of reading on poisoned state. Teardown reads (release/disconnect)
+      // keep moving forward so we don't loop.
+      if (reading_state_.next_state == State::DATA_RECV || reading_state_.next_state == State::DATA_ENQ) {
+        ESP_LOGW(TAG, "Data read failed - aborting session to avoid HDLC desync cascade");
+        this->has_error = true;
+        this->set_next_state_(State::SESSION_RELEASE);
+      } else {
+        this->set_next_state_(reading_state_.next_state);
+      }
     }
     return;
   }
@@ -504,8 +515,12 @@ void DlmsCosemComponent::handle_comms_rx_() {
   }
 
   if (buffers_.reply.complete == 0) {
-    ESP_LOGD(TAG, "DLMS Reply not complete, need more HDLC frames. "
-                  "Continue reading.");
+    // Instrumented: pin what keeps a valid reply "incomplete" after a prior failed read.
+    // moreData/command are reply-level state; sender/receiverFrame are the HDLC counters.
+    ESP_LOGW(TAG, "DLMS Reply not complete: ret=%d complete=%d moreData=%d command=0x%02X "
+                  "senderFrame=0x%02X receiverFrame=0x%02X - continue reading",
+             ret, buffers_.reply.complete, (int) buffers_.reply.moreData, (int) buffers_.reply.command,
+             dlms_settings_.senderFrame, dlms_settings_.receiverFrame);
     // data in multiple frames.
     // we just keep reading until full reply is received.
     return;  // keep reading
