@@ -568,8 +568,31 @@ void DlmsCosemComponent::handle_buffers_req_() {
 
 void DlmsCosemComponent::handle_buffers_rcv_() {
   this->log_state_();
-  // check the reply and go to next stage
-  // todo smth with buffers reply
+  // The HDLC link must be up (SNRM->UA) before the association. cl_parseUAResponse
+  // returns non-OK if the reply was not a valid UA (e.g. a DM disconnected-mode refusal);
+  // a no-reply timeout already sets last_error = HARDWARE_FAULT upstream.
+  if (this->dlms_reading_state_.last_error != DLMS_ERROR_CODE_OK) {
+    ESP_LOGE(TAG, "SNRM not acknowledged (UA result %d '%s') - aborting session",
+             this->dlms_reading_state_.last_error,
+             dlms_error_to_string(this->dlms_reading_state_.last_error));
+    this->has_error = true;
+    this->abort_mission_();
+    return;
+  }
+  // UA parsed OK: cl_parseUAResponse stored the negotiated HDLC limits in the settings.
+  // A zero max-info / window is not a usable link (and would break later framing).
+  if (this->dlms_settings_.maxInfoTX == 0 || this->dlms_settings_.maxInfoRX == 0 ||
+      this->dlms_settings_.windowSizeTX == 0 || this->dlms_settings_.windowSizeRX == 0) {
+    ESP_LOGE(TAG, "UA negotiated invalid HDLC limits (max-info TX=%u RX=%u, window TX=%u RX=%u) - aborting",
+             (unsigned) this->dlms_settings_.maxInfoTX, (unsigned) this->dlms_settings_.maxInfoRX,
+             (unsigned) this->dlms_settings_.windowSizeTX, (unsigned) this->dlms_settings_.windowSizeRX);
+    this->has_error = true;
+    this->abort_mission_();
+    return;
+  }
+  ESP_LOGI(TAG, "HDLC link up (UA). Negotiated max-info TX=%u RX=%u, window TX=%u RX=%u",
+           (unsigned) this->dlms_settings_.maxInfoTX, (unsigned) this->dlms_settings_.maxInfoRX,
+           (unsigned) this->dlms_settings_.windowSizeTX, (unsigned) this->dlms_settings_.windowSizeRX);
   this->set_next_state_(State::ASSOCIATION_REQ);
 }
 
@@ -579,8 +602,20 @@ void DlmsCosemComponent::handle_association_req_() {
 }
 
 void DlmsCosemComponent::handle_association_rcv_() {
-  // check the reply and go to next stage
-  // todo smth with aarq reply
+  this->log_state_();
+  // The association MUST be confirmed before any data request. Both failure modes land
+  // in last_error before we get here: an RX timeout / no AARE sets HARDWARE_FAULT, and a
+  // received-but-rejected AARE sets the cl_parseAAREResponse result. Only advance to the
+  // data phase when the AARE was accepted; otherwise tear the session down.
+  if (this->dlms_reading_state_.last_error != DLMS_ERROR_CODE_OK) {
+    ESP_LOGE(TAG, "Association NOT established (AARE result %d '%s') - aborting session",
+             this->dlms_reading_state_.last_error,
+             dlms_error_to_string(this->dlms_reading_state_.last_error));
+    this->has_error = true;
+    this->abort_mission_();
+    return;
+  }
+  ESP_LOGI(TAG, "Association established");
   this->set_next_state_(State::DATA_ENQ_UNIT);
 }
 
@@ -805,7 +840,9 @@ void DlmsCosemComponent::prepare_and_send_dlms_buffers() {
 void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
   auto make = [this]() { return cl_aarqRequest(&this->dlms_settings_, &this->buffers_.out_msg); };
   auto parse = [this]() { return cl_parseAAREResponse(&this->dlms_settings_, &this->buffers_.reply.data); };
-  this->send_dlms_req_and_next(make, parse, State::ASSOCIATION_RCV);
+  // mission_critical=true: a timeout / rejected AARE aborts the session instead of
+  // silently proceeding to data requests on an unestablished association.
+  this->send_dlms_req_and_next(make, parse, State::ASSOCIATION_RCV, /*mission_critical=*/true);
 }
 
 void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, int type) {
