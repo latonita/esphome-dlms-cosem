@@ -201,6 +201,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 #endif
   void handle_publish_();
 
+  void mark_all_sensors_stale_();
+
   int set_sensor_scale_and_unit(DlmsCosemSensor *sensor);
   int set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis);
 

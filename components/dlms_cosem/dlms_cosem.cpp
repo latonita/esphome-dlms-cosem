@@ -236,6 +236,12 @@ void DlmsCosemComponent::register_sensor(DlmsCosemSensorBase *sensor) {
   this->sensors_.insert({sensor->get_obis_code(), sensor});
 }
 
+void DlmsCosemComponent::mark_all_sensors_stale_() {
+  for (auto const &item : this->sensors_) {
+    item.second->mark_stale();
+  }
+}
+
 void DlmsCosemComponent::abort_mission_() {
 #ifdef ENABLE_DLMS_COSEM_PUSH_MODE
   if (this->is_push_mode()) {
@@ -733,6 +739,8 @@ void DlmsCosemComponent::handle_push_data_process_() {
   this->log_state_();
   ESP_LOGD(TAG, "Processing received push data");
   this->loop_state_.sensor_iter = this->sensors_.begin();
+  // Only the objects present in this push message are published.
+  this->mark_all_sensors_stale_();
   this->set_next_state_(State::PUBLISH);
   this->process_push_data();
   this->clear_rx_buffers_();
@@ -747,7 +755,12 @@ void DlmsCosemComponent::handle_publish_() {
   if (this->loop_state_.sensor_iter != this->sensors_.end()) {
     auto *sensor_base = this->loop_state_.sensor_iter->second;
     if (sensor_base->shall_we_publish()) {
-      sensor_base->publish();
+      if (sensor_base->has_fresh_value()) {
+        sensor_base->publish();
+      } else {
+        ESP_LOGV(TAG, "Not published, no value read this cycle: OBIS %s, sensor '%s'",
+                 sensor_base->get_obis_code().c_str(), sensor_base->get_sensor_name().c_str());
+      }
     }
     this->loop_state_.sensor_iter++;
   } else {
@@ -794,6 +807,8 @@ void DlmsCosemComponent::update() {
     return;
   }
   ESP_LOGD(TAG, "Starting data collection");
+  // Values read in previous cycles must not be published again if this cycle fails to read them.
+  this->mark_all_sensors_stale_();
   this->has_error = false;
   this->set_next_state_(State::TRY_LOCK_BUS);
 }

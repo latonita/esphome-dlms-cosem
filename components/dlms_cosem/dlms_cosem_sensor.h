@@ -40,6 +40,8 @@ class DlmsCosemSensorBase {
   }
 
   bool has_value() { return has_value_; }
+  void mark_stale() { this->fresh_ = false; }
+  bool has_fresh_value() const { return this->fresh_; }
   virtual bool has_got_scale_and_unit() { return scale_and_unit_detected_; }
 
   void record_failure() {
@@ -54,7 +56,8 @@ class DlmsCosemSensorBase {
  protected:
   std::string obis_code_;
   int obis_class_{3 /*DLMS_OBJECT_TYPE_REGISTER*/};
-  bool has_value_;
+  bool has_value_{false};
+  bool fresh_{false};
   uint8_t tries_{0};
   bool we_shall_publish_{true};
   bool scale_and_unit_detected_{false};
@@ -90,11 +93,12 @@ class DlmsCosemSensor : public DlmsCosemSensorBase, public sensor::Sensor {
   void set_value(float value) {
     this->value_ = value * scale_f_ * multiplier_;
     this->has_value_ = true;
+    this->fresh_ = true;
     this->tries_ = 0;
   }
 
  protected:
-  float value_;
+  float value_{NAN};
   float multiplier_{1.0f};
   int8_t scaler_{0};
   float scale_f_{1.0f};
@@ -140,6 +144,7 @@ class DlmsCosemTextSensor : public DlmsCosemSensorBase, public text_sensor::Text
       this->pending_publish_ = true;
     }
     has_value_ = true;
+    fresh_ = true;
     tries_ = 0;
   }
 
