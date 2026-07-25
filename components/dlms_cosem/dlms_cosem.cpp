@@ -11,8 +11,7 @@
 #include <sstream>
 #include <ranges>
 #include "dlms_cosem_helpers.h"
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 static const char *TAG0 = "dlms_cosem_";
 
@@ -509,12 +508,12 @@ void DlmsCosemComponent::handle_comms_rx_() {
 
   auto ret = dlms_getData2(&dlms_settings_, &buffers_.in, &buffers_.reply, 0);
   if (ret != DLMS_ERROR_CODE_OK || buffers_.reply.complete == 0) {
-    ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, dlms_error_to_string(ret),
+    ESP_LOGVV(TAG, "dlms_getData2 ret = %d %s reply.complete = %d", ret, LOG_STR_ARG(dlms_error_to_string(ret)),
               buffers_.reply.complete);
   }
 
   if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
-    ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, dlms_error_to_string(ret));
+    ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
     this->reading_state_.err_invalid_frames++;
     this->set_next_state_(reading_state_.next_state);
     return;
@@ -523,8 +522,9 @@ void DlmsCosemComponent::handle_comms_rx_() {
   if (buffers_.reply.complete == 0) {
     // Instrumented: pin what keeps a valid reply "incomplete" after a prior failed read.
     // moreData/command are reply-level state; sender/receiverFrame are the HDLC counters.
-    ESP_LOGW(TAG, "DLMS Reply not complete: ret=%d complete=%d moreData=%d command=0x%02X "
-                  "senderFrame=0x%02X receiverFrame=0x%02X - continue reading",
+    ESP_LOGW(TAG,
+             "DLMS Reply not complete: ret=%d complete=%d moreData=%d command=0x%02X "
+             "senderFrame=0x%02X receiverFrame=0x%02X - continue reading",
              ret, buffers_.reply.complete, (int) buffers_.reply.moreData, (int) buffers_.reply.command,
              dlms_settings_.senderFrame, dlms_settings_.receiverFrame);
     // data in multiple frames.
@@ -542,7 +542,7 @@ void DlmsCosemComponent::handle_comms_rx_() {
     //        ESP_LOGD(TAG, "DLSM parser fn result == DLMS_ERROR_CODE_OK");
 
   } else {
-    ESP_LOGE(TAG, "DLMS parser fn error %d %s", parse_ret, dlms_error_to_string(parse_ret));
+    ESP_LOGE(TAG, "DLMS parser fn error %d %s", parse_ret, LOG_STR_ARG(dlms_error_to_string(parse_ret)));
 
 #ifdef ENABLE_DLMS_COSEM_PUSH_MODE
     if (this->is_push_mode()) {
@@ -593,9 +593,8 @@ void DlmsCosemComponent::handle_buffers_rcv_() {
   // returns non-OK if the reply was not a valid UA (e.g. a DM disconnected-mode refusal);
   // a no-reply timeout already sets last_error = HARDWARE_FAULT upstream.
   if (this->dlms_reading_state_.last_error != DLMS_ERROR_CODE_OK) {
-    ESP_LOGE(TAG, "SNRM not acknowledged (UA result %d '%s') - aborting session",
-             this->dlms_reading_state_.last_error,
-             dlms_error_to_string(this->dlms_reading_state_.last_error));
+    ESP_LOGE(TAG, "SNRM not acknowledged (UA result %d '%s') - aborting session", this->dlms_reading_state_.last_error,
+             LOG_STR_ARG(dlms_error_to_string(this->dlms_reading_state_.last_error)));
     this->has_error = true;
     this->abort_mission_();
     return;
@@ -631,7 +630,7 @@ void DlmsCosemComponent::handle_association_rcv_() {
   if (this->dlms_reading_state_.last_error != DLMS_ERROR_CODE_OK) {
     ESP_LOGE(TAG, "Association NOT established (AARE result %d '%s') - aborting session",
              this->dlms_reading_state_.last_error,
-             dlms_error_to_string(this->dlms_reading_state_.last_error));
+             LOG_STR_ARG(dlms_error_to_string(this->dlms_reading_state_.last_error)));
     this->has_error = true;
     this->abort_mission_();
     return;
@@ -878,7 +877,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
 void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, int type) {
   auto ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
   if (ret != DLMS_ERROR_CODE_OK) {
-    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, dlms_error_to_string(ret));
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
     this->set_next_state_(State::DATA_ENQ);
     return;
   }
@@ -903,7 +902,7 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, in
     ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
   }
   if (ret != DLMS_ERROR_CODE_OK) {
-    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, dlms_error_to_string(ret));
+    ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
     this->set_next_state_(State::DATA_NEXT);
     return;
   }
@@ -959,7 +958,7 @@ void DlmsCosemComponent::send_dlms_req_and_next(DlmsRequestMaker maker, DlmsResp
   if (maker != nullptr) {
     ret = maker();
     if (ret != DLMS_ERROR_CODE_OK) {
-      ESP_LOGE(TAG, "Error in DLSM request maker function %d '%s'", ret, dlms_error_to_string(ret));
+      ESP_LOGE(TAG, "Error in DLSM request maker function %d '%s'", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
       this->set_next_state_(State::IDLE);
       return;
     }
@@ -1066,7 +1065,7 @@ int DlmsCosemComponent::set_sensor_scale_and_unit(DlmsCosemSensor *sensor) {
   if (!buffers_.reply.complete)
     return DLMS_ERROR_CODE_FALSE;
   auto vt = buffers_.reply.dataType;
-  ESP_LOGD(TAG, "DLMS_DATA_TYPE: %s (%d)", dlms_data_type_to_string(vt), vt);
+  ESP_LOGD(TAG, "DLMS_DATA_TYPE: %s (%d)", LOG_STR_ARG(dlms_data_type_to_string(vt)), vt);
   if (vt != 0) {
     return DLMS_ERROR_CODE_FALSE;
   }
@@ -1086,8 +1085,8 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 
   auto vt = buffers_.reply.dataType;
   auto object_class = sensor->get_obis_class();
-  ESP_LOGD(TAG, "Class: %d, OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", object_class, obis, dlms_data_type_to_string(vt),
-           vt);
+  ESP_LOGD(TAG, "Class: %d, OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", object_class, obis,
+           LOG_STR_ARG(dlms_data_type_to_string(vt)), vt);
 
   //      if (cosem_rr_.result().has_value()) {
   if (this->dlms_reading_state_.last_error == DLMS_ERROR_CODE_OK) {
@@ -1405,5 +1404,4 @@ uint8_t DlmsCosemComponent::next_obj_id_ = 0;
 
 std::string DlmsCosemComponent::generateTag() { return str_sprintf("%s%03d", TAG0, ++next_obj_id_); }
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem

@@ -2,8 +2,7 @@
 #include <cstring>
 #include <cstdio>
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 float dlms_data_as_float(DLMS_DATA_TYPE value_type, const uint8_t *value_buffer_ptr, uint8_t value_length) {
   if (value_buffer_ptr == nullptr || value_length == 0)
@@ -275,81 +274,80 @@ std::string dlms_data_as_string(DLMS_DATA_TYPE value_type, const uint8_t *value_
   }
 }
 
-const char *dlms_error_to_string(int error) {
+const LogString *dlms_error_to_string(int error) {
   switch (error) {
     case DLMS_ERROR_CODE_OK:
-      return "DLMS_ERROR_CODE_OK";
+      return LOG_STR("DLMS_ERROR_CODE_OK");
     case DLMS_ERROR_CODE_HARDWARE_FAULT:
-      return "DLMS_ERROR_CODE_HARDWARE_FAULT";
+      return LOG_STR("DLMS_ERROR_CODE_HARDWARE_FAULT");
     case DLMS_ERROR_CODE_TEMPORARY_FAILURE:
-      return "DLMS_ERROR_CODE_TEMPORARY_FAILURE";
+      return LOG_STR("DLMS_ERROR_CODE_TEMPORARY_FAILURE");
     case DLMS_ERROR_CODE_READ_WRITE_DENIED:
-      return "DLMS_ERROR_CODE_READ_WRITE_DENIED";
+      return LOG_STR("DLMS_ERROR_CODE_READ_WRITE_DENIED");
     case DLMS_ERROR_CODE_UNDEFINED_OBJECT:
-      return "DLMS_ERROR_CODE_UNDEFINED_OBJECT";
+      return LOG_STR("DLMS_ERROR_CODE_UNDEFINED_OBJECT");
     case DLMS_ERROR_CODE_ACCESS_VIOLATED:
-      return "DLMS_ERROR_CODE_ACCESS_VIOLATED";
+      return LOG_STR("DLMS_ERROR_CODE_ACCESS_VIOLATED");
     default:
-      return "";
+      return LOG_STR("");
   }
 }
 
-const char *dlms_data_type_to_string(DLMS_DATA_TYPE vt) {
+const LogString *dlms_data_type_to_string(DLMS_DATA_TYPE vt) {
   switch (vt) {
     case DLMS_DATA_TYPE_NONE:
-      return "NONE";
+      return LOG_STR("NONE");
     case DLMS_DATA_TYPE_BOOLEAN:
-      return "BOOLEAN";
+      return LOG_STR("BOOLEAN");
     case DLMS_DATA_TYPE_BIT_STRING:
-      return "BIT_STRING";
+      return LOG_STR("BIT_STRING");
     case DLMS_DATA_TYPE_INT32:
-      return "INT32";
+      return LOG_STR("INT32");
     case DLMS_DATA_TYPE_UINT32:
-      return "UINT32";
+      return LOG_STR("UINT32");
     case DLMS_DATA_TYPE_OCTET_STRING:
-      return "OCTET_STRING";
+      return LOG_STR("OCTET_STRING");
     case DLMS_DATA_TYPE_STRING:
-      return "STRING";
+      return LOG_STR("STRING");
     case DLMS_DATA_TYPE_BINARY_CODED_DESIMAL:
-      return "BINARY_CODED_DESIMAL";
+      return LOG_STR("BINARY_CODED_DESIMAL");
     case DLMS_DATA_TYPE_STRING_UTF8:
-      return "STRING_UTF8";
+      return LOG_STR("STRING_UTF8");
     case DLMS_DATA_TYPE_INT8:
-      return "INT8";
+      return LOG_STR("INT8");
     case DLMS_DATA_TYPE_INT16:
-      return "INT16";
+      return LOG_STR("INT16");
     case DLMS_DATA_TYPE_UINT8:
-      return "UINT8";
+      return LOG_STR("UINT8");
     case DLMS_DATA_TYPE_UINT16:
-      return "UINT16";
+      return LOG_STR("UINT16");
     case DLMS_DATA_TYPE_INT64:
-      return "INT64";
+      return LOG_STR("INT64");
     case DLMS_DATA_TYPE_UINT64:
-      return "UINT64";
+      return LOG_STR("UINT64");
     case DLMS_DATA_TYPE_ENUM:
-      return "ENUM";
+      return LOG_STR("ENUM");
     case DLMS_DATA_TYPE_FLOAT32:
-      return "FLOAT32";
+      return LOG_STR("FLOAT32");
     case DLMS_DATA_TYPE_FLOAT64:
-      return "FLOAT64";
+      return LOG_STR("FLOAT64");
     case DLMS_DATA_TYPE_DATETIME:
-      return "DATETIME";
+      return LOG_STR("DATETIME");
     case DLMS_DATA_TYPE_DATE:
-      return "DATE";
+      return LOG_STR("DATE");
     case DLMS_DATA_TYPE_TIME:
-      return "TIME";
+      return LOG_STR("TIME");
     case DLMS_DATA_TYPE_ARRAY:
-      return "ARRAY";
+      return LOG_STR("ARRAY");
     case DLMS_DATA_TYPE_STRUCTURE:
-      return "STRUCTURE";
+      return LOG_STR("STRUCTURE");
     case DLMS_DATA_TYPE_COMPACT_ARRAY:
-      return "COMPACT_ARRAY";
+      return LOG_STR("COMPACT_ARRAY");
     case DLMS_DATA_TYPE_BYREF:
-      return "BYREF";
+      return LOG_STR("BYREF");
     default:
-      return "UNKNOWN";
+      return LOG_STR("UNKNOWN");
   }
 }
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem

@@ -30,8 +30,7 @@
 
 //#define IEC_HANDSHAKE
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 static const size_t DEFAULT_IN_BUF_SIZE = 256;
 static const size_t DEFAULT_IN_BUF_SIZE_PUSH = 2048;
@@ -334,5 +333,4 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   static std::string generateTag();
 };
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem

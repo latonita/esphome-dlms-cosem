@@ -4,8 +4,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 class AnyObjectLocker {
  public:
@@ -31,5 +30,4 @@ class AnyObjectLocker {
   static std::vector<void *> locked_objects_;
   static Mutex lock_;
 };
-};  // namespace dlms_cosem
-};  // namespace esphome
+}  // namespace esphome::dlms_cosem

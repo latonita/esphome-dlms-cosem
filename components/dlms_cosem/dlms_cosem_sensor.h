@@ -5,16 +5,14 @@
 #include "esphome/components/text_sensor/text_sensor.h"
 #endif
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 static constexpr uint8_t MAX_TRIES = 10;
 
 enum SensorType { SENSOR, TEXT_SENSOR };
 
-// const char * UNIT_STR_UNKNOWN = "Unknown unit";
-#define UNIT_STR_UNKNOWN_NOT_YET "Unknown unit / not yet known"
-#define UNIT_STR_UNKNOWN "Unknown unit"
+static constexpr const char *UNIT_STR_UNKNOWN_NOT_YET = "Unknown unit / not yet known";
+static constexpr const char *UNIT_STR_UNKNOWN = "Unknown unit";
 
 class DlmsCosemSensorBase {
  public:
@@ -191,5 +189,4 @@ class DlmsCosemTextSensor : public DlmsCosemSensorBase, public text_sensor::Text
 };
 #endif
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem

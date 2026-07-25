@@ -9,8 +9,7 @@
 
 #include "dlms_cosem_helpers.h"
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 constexpr const char *TAG = "dlms_cosem.axdr";
 
@@ -632,7 +631,6 @@ void AxdrStreamParser::register_pattern_dsl(const char *name, const std::string 
   registry_.add_pattern(pat);
 }
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem
 
 #endif  // ENABLE_DLMS_COSEM_PUSH_MODE

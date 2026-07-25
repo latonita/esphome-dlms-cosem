@@ -5,8 +5,7 @@
 #include "esphome/components/uart/uart.h"
 #include "esphome/core/hal.h"
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 static const uint32_t TIMEOUT = 20;  // ms; default timeout in the uart implementation is 100ms
 
@@ -54,5 +53,4 @@ class DlmsCosemUart {
   bool is_ble_nus_;
 };
 
-}  // namespace dlms_cosem
-}  // namespace esphome
+}  // namespace esphome::dlms_cosem

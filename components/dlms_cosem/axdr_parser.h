@@ -12,8 +12,7 @@
 #include <cosem.h>
 #include <dlmssettings.h>
 
-namespace esphome {
-namespace dlms_cosem {
+namespace esphome::dlms_cosem {
 
 bool hlp_isValueDataType(DLMS_DATA_TYPE type);
 
@@ -115,9 +114,6 @@ class AxdrStreamParser {
   void clear_patterns() { registry_.clear(); }
 };
 
+}  // namespace esphome::dlms_cosem
 
-}  // namespace dlms_cosem
-}  // namespace esphome
-
-
-#endif // ENABLE_DLMS_COSEM_PUSH_MODE
+#endif  // ENABLE_DLMS_COSEM_PUSH_MODE
