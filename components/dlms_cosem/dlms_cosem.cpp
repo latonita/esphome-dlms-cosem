@@ -610,7 +610,7 @@ void DlmsCosemComponent::handle_buffers_rcv_() {
     this->abort_mission_();
     return;
   }
-  ESP_LOGI(TAG, "HDLC link up (UA). Negotiated max-info TX=%u RX=%u, window TX=%u RX=%u",
+  ESP_LOGV(TAG, "HDLC link up (UA). Negotiated max-info TX=%u RX=%u, window TX=%u RX=%u",
            (unsigned) this->dlms_settings_.maxInfoTX, (unsigned) this->dlms_settings_.maxInfoRX,
            (unsigned) this->dlms_settings_.windowSizeTX, (unsigned) this->dlms_settings_.windowSizeRX);
   this->set_next_state_(State::ASSOCIATION_REQ);
@@ -635,7 +635,7 @@ void DlmsCosemComponent::handle_association_rcv_() {
     this->abort_mission_();
     return;
   }
-  ESP_LOGI(TAG, "Association established");
+  ESP_LOGV(TAG, "Association established");
   this->set_next_state_(State::DATA_ENQ_UNIT);
 }
 
