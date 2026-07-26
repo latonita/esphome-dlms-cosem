@@ -202,6 +202,9 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
   void mark_all_sensors_stale_();
 
+  // Puts the HDLC receive sequence counter back in step after a reply was lost on the wire.
+  void resync_hdlc_receiver_();
+
   int set_sensor_scale_and_unit(DlmsCosemSensor *sensor);
   int set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis);
 
@@ -250,6 +253,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
     uint32_t session_started_ms{0};             // start of session
     SensorMap::iterator request_iter{nullptr};  // talking to meter
     SensorMap::iterator sensor_iter{nullptr};   // publishing sensor values
+    uint8_t consecutive_read_timeouts{0};       // reads in a row that got no reply
 
   } loop_state_;
 

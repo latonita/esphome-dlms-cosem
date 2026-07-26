@@ -29,6 +29,20 @@ static constexpr uint8_t NAK = 0x15;
 
 static constexpr uint8_t HDLC_FLAG = 0x7E;
 
+// Gurux keeps an HDLC receive sequence counter and silently drops any frame whose number is not
+// the expected one. When a reply is lost on the wire the meter has already moved its counter on,
+// so every following frame - even a perfectly good one - is thrown away and the reply never looks
+// complete. Parking our counter on the server's start-of-sequence value takes the
+// "pre-established connection" escape hatch in Gurux checkFrame(): the next frame is accepted
+// whatever its number and normal sequence checking resumes from there.
+// Value mirrors SERVER_START_RECEIVER_FRAME_SEQUENCE in the Gurux dlmsSettings.c (not exported).
+static constexpr uint8_t HDLC_RECEIVER_FRAME_RESYNC = 0xFE;
+
+// How many reads in a row may time out before the session is considered hopeless. Resyncing lets
+// us skip a single lost reply and carry on with the remaining sensors, but if the meter has really
+// gone away there is no point in spending the full receive timeout on every sensor left.
+static constexpr uint8_t MAX_CONSECUTIVE_READ_TIMEOUTS = 3;
+
 static const uint8_t CMD_ACK_SET_BAUD_AND_MODE[] = {ACK, '0', '5', '1', CR, LF};
 static const uint8_t CMD_CLOSE_SESSION[] = {SOH, 0x42, 0x30, ETX, 0x75};
 
@@ -460,16 +474,29 @@ void DlmsCosemComponent::handle_comms_rx_() {
       this->abort_mission_();
     } else {
       reading_state_.err_invalid_frames++;
-      // A data-phase read that times out leaves the HDLC/DLMS sequence desynced; if we just
-      // move to the next sensor, every later (even perfect) reply is judged "not complete"
-      // and the whole cycle is wasted. Tear the session down cleanly (SESSION_RELEASE ->
-      // DISCONNECT -> PUBLISH still publishes whatever was already read) and reconnect fresh
-      // next cycle instead of reading on poisoned state. Teardown reads (release/disconnect)
-      // keep moving forward so we don't loop.
-      if (reading_state_.next_state == State::DATA_RECV || reading_state_.next_state == State::DATA_ENQ) {
-        ESP_LOGW(TAG, "Data read failed - aborting session to avoid HDLC desync cascade");
+      // The reply we were waiting for never arrived, so our HDLC receive counter is now one
+      // behind the meter's. Put it back in step, otherwise Gurux drops every remaining frame of
+      // this session (including the session release and disconnect replies) and the rest of the
+      // cycle is wasted on timeouts.
+      this->resync_hdlc_receiver_();
+      this->loop_state_.consecutive_read_timeouts++;
+      // If the meter has really gone quiet there is no point in spending the full receive timeout
+      // on every sensor still on the list. Close the session instead - the teardown path still
+      // publishes whatever was read before things went wrong.
+      if (this->loop_state_.consecutive_read_timeouts >= MAX_CONSECUTIVE_READ_TIMEOUTS &&
+          (reading_state_.next_state == State::DATA_RECV || reading_state_.next_state == State::DATA_ENQ)) {
+        ESP_LOGE(TAG, "%u reads in a row timed out - meter is not answering, closing session",
+                 this->loop_state_.consecutive_read_timeouts);
         this->has_error = true;
         this->set_next_state_(State::SESSION_RELEASE);
+        return;
+      }
+      // Skip just this reading and carry on with the remaining sensors. DATA_RECV must not run:
+      // its parser would read whatever is left in the reply buffer from an earlier request.
+      if (reading_state_.next_state == State::DATA_RECV) {
+        ESP_LOGW(TAG, "Read failed for OBIS %s - skipping this sensor", this->loop_state_.request_iter->first.c_str());
+        this->has_error = true;
+        this->set_next_state_(State::DATA_NEXT);
       } else {
         this->set_next_state_(reading_state_.next_state);
       }
@@ -502,6 +529,7 @@ void DlmsCosemComponent::handle_comms_rx_() {
     return;
   }
 
+  const uint32_t rx_time_before_frame = this->last_rx_time_;
   this->update_last_rx_time_();
 
   // this->set_next_state_(reading_state_.next_state);
@@ -515,25 +543,43 @@ void DlmsCosemComponent::handle_comms_rx_() {
   if (ret != DLMS_ERROR_CODE_OK && ret != DLMS_ERROR_CODE_FALSE) {
     ESP_LOGE(TAG, "dlms_getData2 failed. ret %d %s", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
     this->reading_state_.err_invalid_frames++;
-    this->set_next_state_(reading_state_.next_state);
+    // We do not know how much of the frame Gurux consumed before giving up, so the receive
+    // sequence can no longer be trusted either.
+    this->resync_hdlc_receiver_();
+    if (reading_state_.next_state == State::DATA_RECV) {
+      // Nothing usable was parsed - going to DATA_RECV would publish whatever the reply buffer
+      // happened to hold from an earlier request. Skip this sensor instead.
+      this->has_error = true;
+      this->set_next_state_(State::DATA_NEXT);
+    } else {
+      this->set_next_state_(reading_state_.next_state);
+    }
     return;
   }
 
   if (buffers_.reply.complete == 0) {
-    // Instrumented: pin what keeps a valid reply "incomplete" after a prior failed read.
-    // moreData/command are reply-level state; sender/receiverFrame are the HDLC counters.
-    ESP_LOGW(TAG,
-             "DLMS Reply not complete: ret=%d complete=%d moreData=%d command=0x%02X "
-             "senderFrame=0x%02X receiverFrame=0x%02X - continue reading",
-             ret, buffers_.reply.complete, (int) buffers_.reply.moreData, (int) buffers_.reply.command,
-             dlms_settings_.senderFrame, dlms_settings_.receiverFrame);
-    // data in multiple frames.
-    // we just keep reading until full reply is received.
+    // We read a whole HDLC frame but Gurux produced nothing at all from it - no command, no
+    // "more frames follow". That only happens when it did not like the frame's sequence number
+    // and quietly dropped it. A real multi-frame reply always leaves the command byte set.
+    if (buffers_.reply.command == 0 && buffers_.reply.moreData == 0) {
+      ESP_LOGW(TAG, "Frame dropped by HDLC sequence check (sender 0x%02X, receiver 0x%02X)",
+               dlms_settings_.senderFrame, dlms_settings_.receiverFrame);
+      this->reading_state_.err_invalid_frames++;
+      this->resync_hdlc_receiver_();
+      // A dropped frame is not progress, so do not let it push the receive deadline out - a
+      // stream of them would otherwise keep this request alive forever.
+      this->last_rx_time_ = rx_time_before_frame;
+      return;  // this reply is lost; the resync lets the next one through
+    }
+    // Data spread over several frames - keep reading until the full reply is in.
+    ESP_LOGV(TAG, "DLMS reply not complete yet (command 0x%02X, moreData %d) - continue reading",
+             buffers_.reply.command, (int) buffers_.reply.moreData);
     return;  // keep reading
   }
 
   this->update_last_rx_time_();
   this->set_next_state_(reading_state_.next_state);
+  this->loop_state_.consecutive_read_timeouts = 0;
 
   auto parse_ret = this->dlms_reading_state_.parser_fn();
   this->dlms_reading_state_.last_error = parse_ret;
@@ -558,12 +604,22 @@ void DlmsCosemComponent::handle_comms_rx_() {
   }
 }
 
+void DlmsCosemComponent::resync_hdlc_receiver_() {
+  if (this->dlms_settings_.receiverFrame == HDLC_RECEIVER_FRAME_RESYNC) {
+    return;  // already waiting to adopt whatever comes next
+  }
+  ESP_LOGD(TAG, "Resyncing HDLC receive sequence (was 0x%02X, sender 0x%02X)", this->dlms_settings_.receiverFrame,
+           this->dlms_settings_.senderFrame);
+  this->dlms_settings_.receiverFrame = HDLC_RECEIVER_FRAME_RESYNC;
+}
+
 void DlmsCosemComponent::handle_open_session_() {
   this->stats_.connections_tried_++;
   this->loop_state_.session_started_ms = millis();
   this->log_state_();
   this->clear_rx_buffers_();
   this->loop_state_.request_iter = this->sensors_.begin();
+  this->loop_state_.consecutive_read_timeouts = 0;
 
   this->set_next_state_(State::BUFFERS_REQ);
 
@@ -717,6 +773,9 @@ void DlmsCosemComponent::handle_data_next_() {
 
 void DlmsCosemComponent::handle_session_release_() {
   this->loop_state_.sensor_iter = this->sensors_.begin();
+  // Give the teardown its own budget: it must always run to the end, even when we got here
+  // because the data phase had run out of patience.
+  this->loop_state_.consecutive_read_timeouts = 0;
 
   this->log_state_();
   ESP_LOGD(TAG, "Session release request");
