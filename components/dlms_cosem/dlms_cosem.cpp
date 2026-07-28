@@ -1214,6 +1214,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
               dlms_data_as_string(vt, raw_ptr, raw_len > UINT8_MAX ? UINT8_MAX : static_cast<uint8_t>(raw_len));
           static_cast<DlmsCosemTextSensor *>(sensor)->set_value(data_as_string.c_str(),
                                                                 this->cp1251_conversion_required_);
+          ESP_LOGV(TAG, "DATA AS STRING: ""%s""", data_as_string.c_str());
         } else {
           ESP_LOGW(TAG, "Wrong OBIS class. We can only handle Data (class 1), Registers (class = 3), Extended "
                         "Registers (class = 4), and Clock (class = 8) for text sensors.");
