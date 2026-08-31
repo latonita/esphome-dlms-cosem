@@ -9,10 +9,14 @@
 [Ленэлектро ЛЕ-2](https://github.com/latonita/esphome-le2-meter) •
 [Пульсар-М](https://github.com/latonita/esphome-pulsar-m) •
 [Энергомера BLE](https://github.com/latonita/esphome-energomera-ble) •
-[Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble)
+[Нартис RF433](https://github.com/latonita/esphome-nartis-rf-meter) •
+[Нартис RF433-2](https://github.com/latonita/esphome-nartis-rf-2-meter) •
+[Мост UART↔RF433-2](https://github.com/latonita/esphome-uart-nartis-rf) •
+[Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble) •
+
 
 # esphome-dlms-cosem
-Подключение EspHome к счетчикам электроэнергии по протоколу DLMS/COSEM/СПОДЭС (Энергомера CE207/CE307/CE308, Милур 107S, Мир, Нартис, РиМ, Пульсар, ZPA AM375, ZPA ZE312, Sagemcom XT211 и многие другие) через RS-485 интерфейст или через оптопорт(*). Кроме того, возможно подключение через Bluetooth BLE UART (НАРТИС-И100-SP1 и НАРТИС-И300-SP31), используя компонент [Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble).
+Подключение EspHome к счетчикам электроэнергии по протоколу DLMS/COSEM/СПОДЭС (Энергомера CE207/CE307/CE308, Милур 107S, Мир, Нартис, РиМ, Пульсар, ZPA AM375, ZPA ZE312, Sagemcom XT211 и многие другие) через RS-485 интерфейст или через оптопорт(*). Кроме того, возможно подключение через Bluetooth BLE UART или RF433 (НАРТИС-И100-SP1 и НАРТИС-И300-SP31), используя компоненты [Nordic UART (BLE NUS)](https://github.com/latonita/esphome-nordic-uart-ble) и [Мост UART↔RF433-2](https://github.com/latonita/esphome-uart-nartis-rf) соответственно. 
 
 Два режима работы - запрос-ответ и режим ожидания данных от счетчика (PUSH).
 
