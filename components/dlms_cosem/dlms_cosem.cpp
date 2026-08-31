@@ -1139,7 +1139,8 @@ void DlmsCosemComponent::send_dlms_messages_() {
       this->flow_control_pin_->digital_write(true);
 
     this->write_array(buffer->data + buffers_.out_msg_data_pos, bytes_to_send);
-
+    this->flush();
+    
     if (this->flow_control_pin_ != nullptr)
       this->flow_control_pin_->digital_write(false);
 
