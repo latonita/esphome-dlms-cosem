@@ -241,12 +241,13 @@ void DlmsCosemComponent::dump_config() {
   ESP_LOGCONFIG(TAG, "  Sensors:");
   for (const auto &sensors : sensors_) {
     auto &s = sensors.second;
-    ESP_LOGCONFIG(TAG, "    OBIS code: %s, Name: %s", s->get_obis_code().c_str(), s->get_sensor_name().c_str());
+    ESP_LOGCONFIG(TAG, "    OBIS code: %s, Class: %d, Attribute: %d, Name: %s", s->get_obis_code().c_str(),
+                  s->get_obis_class(), s->get_attribute(), s->get_sensor_name().c_str());
   }
 }
 
 void DlmsCosemComponent::register_sensor(DlmsCosemSensorBase *sensor) {
-  this->sensors_.insert({sensor->get_obis_code(), sensor});
+  this->sensors_.insert({{sensor->get_obis_code(), sensor->get_attribute()}, sensor});
 }
 
 void DlmsCosemComponent::mark_all_sensors_stale_() {
@@ -494,7 +495,8 @@ void DlmsCosemComponent::handle_comms_rx_() {
       // Skip just this reading and carry on with the remaining sensors. DATA_RECV must not run:
       // its parser would read whatever is left in the reply buffer from an earlier request.
       if (reading_state_.next_state == State::DATA_RECV) {
-        ESP_LOGW(TAG, "Read failed for OBIS %s - skipping this sensor", this->loop_state_.request_iter->first.c_str());
+        ESP_LOGW(TAG, "Read failed for OBIS %s - skipping this sensor",
+                 this->loop_state_.request_iter->first.obis_code.c_str());
         this->has_error = true;
         this->set_next_state_(State::DATA_NEXT);
       } else {
@@ -703,18 +705,20 @@ void DlmsCosemComponent::handle_data_enq_unit_() {
     return;
   }
 
-  auto req = this->loop_state_.request_iter->first;
+  auto req = this->loop_state_.request_iter->first.obis_code;
   auto sens = this->loop_state_.request_iter->second;
-  auto type = sens->get_obis_class();
+  auto obis_class = sens->get_obis_class();
 
-  ESP_LOGD(TAG, "OBIS code: %s, Sensor: %s", req.c_str(), sens->get_sensor_name().c_str());
+  ESP_LOGD(TAG, "OBIS code: %s, Class: %d, Attribute: %d, Sensor: %s", req.c_str(), obis_class, sens->get_attribute(),
+           sens->get_sensor_name().c_str());
 
   // request units for numeric sensors only and only once
-  if (sens->get_type() == SensorType::SENSOR && type == DLMS_OBJECT_TYPE_REGISTER && !sens->has_got_scale_and_unit()) {
-    // if (type == DLMS_OBJECT_TYPE_REGISTER)
+  if (sens->get_type() == SensorType::SENSOR && obis_class == DLMS_OBJECT_TYPE_REGISTER &&
+      !sens->has_got_scale_and_unit()) {
+    // if (obis_class == DLMS_OBJECT_TYPE_REGISTER)
     //        if (sens->get_attribute() != 2) {
     this->buffers_.gx_attribute = 3;
-    this->prepare_and_send_dlms_data_unit_request(req.c_str(), type);
+    this->prepare_and_send_dlms_data_unit_request(req.c_str(), obis_class);
   } else {
     // units not working so far... so we are requesting just data
     this->set_next_state_(State::DATA_ENQ);
@@ -729,15 +733,16 @@ void DlmsCosemComponent::handle_data_enq_() {
     return;
   }
 
-  auto req = this->loop_state_.request_iter->first;
+  auto req = this->loop_state_.request_iter->first.obis_code;
   auto sens = this->loop_state_.request_iter->second;
-  auto type = sens->get_obis_class();
+  auto obis_class = sens->get_obis_class();
   bool is_text_sensor = sens->get_type() == SensorType::TEXT_SENSOR;
+  // Avoid Gurux cl_updateValue for non-numeric sensors, it leaks memory in this case. Clock and
+  // Limiter values are only reachable through the Gurux object, so those two keep using it.
   bool skip_gurux_value_update =
-      is_text_sensor && type != DLMS_OBJECT_TYPE_CLOCK;  // avoid using Gurux cl_updateValue for non-numeric sensors,
-                                                         // since it leaks memory in this case
-  auto units_were_requested =
-      (sens->get_type() == SensorType::SENSOR && type == DLMS_OBJECT_TYPE_REGISTER && !sens->has_got_scale_and_unit());
+      is_text_sensor && obis_class != DLMS_OBJECT_TYPE_CLOCK && obis_class != DLMS_OBJECT_TYPE_LIMITER;
+  auto units_were_requested = (sens->get_type() == SensorType::SENSOR && obis_class == DLMS_OBJECT_TYPE_REGISTER &&
+                               !sens->has_got_scale_and_unit());
   if (units_were_requested) {
     auto ret = this->set_sensor_scale_and_unit(static_cast<DlmsCosemSensor *>(sens));
   }
@@ -748,15 +753,16 @@ void DlmsCosemComponent::handle_data_enq_() {
   }
 #endif
 
-  this->buffers_.gx_attribute = 2;
-  this->prepare_and_send_dlms_data_request(req.c_str(), type, !units_were_requested, skip_gurux_value_update);
+  this->buffers_.gx_attribute = sens->get_attribute();
+  this->prepare_and_send_dlms_data_request(req.c_str(), obis_class, !units_were_requested,
+                                          skip_gurux_value_update);
 }
 
 void DlmsCosemComponent::handle_data_recv_() {
   this->log_state_();
   this->set_next_state_(State::DATA_NEXT);
 
-  auto req = this->loop_state_.request_iter->first;
+  auto req = this->loop_state_.request_iter->first.obis_code;
   auto sens = this->loop_state_.request_iter->second;
   auto ret = this->set_sensor_value(sens, req.c_str());
 }
@@ -933,8 +939,8 @@ void DlmsCosemComponent::prepare_and_send_dlms_aarq() {
   this->send_dlms_req_and_next(make, parse, State::ASSOCIATION_RCV, /*mission_critical=*/true);
 }
 
-void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, int type) {
-  auto ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
+void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obis, int obis_class) {
+  auto ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) obis_class, obis);
   if (ret != DLMS_ERROR_CODE_OK) {
     ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
     this->set_next_state_(State::DATA_ENQ);
@@ -952,13 +958,26 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_unit_request(const char *obi
   this->send_dlms_req_and_next(make, parse, State::DATA_ENQ, false, false);
 }
 
-void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, int type, bool reg_init,
+void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, int obis_class, bool reg_init,
                                                             bool skip_gurux_value_update) {
   int ret = DLMS_ERROR_CODE_OK;
-  if (type == DLMS_OBJECT_TYPE_CLOCK) {
-    ret = cosem_init(BASE(this->buffers_.gx_clock), (DLMS_OBJECT_TYPE) type, obis);
-  } else if (reg_init) {
-    ret = cosem_init(BASE(this->buffers_.gx_register), (DLMS_OBJECT_TYPE) type, obis);
+  gxObject *object = nullptr;
+  if (obis_class == DLMS_OBJECT_TYPE_CLOCK) {
+    object = BASE(this->buffers_.gx_clock);
+    ret = cosem_init(object, (DLMS_OBJECT_TYPE) obis_class, obis);
+#ifndef DLMS_IGNORE_LIMITER
+  } else if (obis_class == DLMS_OBJECT_TYPE_LIMITER) {
+    object = BASE(this->buffers_.gx_limiter);
+    // cosem_init() wipes the whole object, so release what the previous read left inside it first.
+    this->clear_limiter_();
+    ret = cosem_init(object, (DLMS_OBJECT_TYPE) obis_class, obis);
+#endif
+  } else {
+    object = BASE(this->buffers_.gx_register);
+    // reg_init is false when the scaler/unit request has just initialized the same object.
+    if (reg_init) {
+      ret = cosem_init(object, (DLMS_OBJECT_TYPE) obis_class, obis);
+    }
   }
   if (ret != DLMS_ERROR_CODE_OK) {
     ESP_LOGE(TAG, "cosem_init error %d '%s'", ret, LOG_STR_ARG(dlms_error_to_string(ret)));
@@ -966,25 +985,14 @@ void DlmsCosemComponent::prepare_and_send_dlms_data_request(const char *obis, in
     return;
   }
 
-  auto make = [this, type]() {
-    return (type == DLMS_OBJECT_TYPE_CLOCK) ? cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_clock),
-                                                      this->buffers_.gx_attribute, &this->buffers_.out_msg)
-                                            : cl_read(&this->dlms_settings_, BASE(this->buffers_.gx_register),
-                                                      this->buffers_.gx_attribute, &this->buffers_.out_msg);
+  auto make = [this, object]() {
+    return cl_read(&this->dlms_settings_, object, this->buffers_.gx_attribute, &this->buffers_.out_msg);
   };
-  auto parse = [this, type, skip_gurux_value_update]() -> int {
+  auto parse = [this, object, skip_gurux_value_update]() -> int {
     if (skip_gurux_value_update) {
       return DLMS_ERROR_CODE_OK;
     }
-    int ret = DLMS_ERROR_CODE_OK;
-    if (type == DLMS_OBJECT_TYPE_CLOCK) {
-      ret = cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_clock), this->buffers_.gx_attribute,
-                           &this->buffers_.reply.dataValue);
-    } else {
-      ret = cl_updateValue(&this->dlms_settings_, BASE(this->buffers_.gx_register), this->buffers_.gx_attribute,
-                           &this->buffers_.reply.dataValue);
-    }
-    return ret;
+    return cl_updateValue(&this->dlms_settings_, object, this->buffers_.gx_attribute, &this->buffers_.reply.dataValue);
   };
   this->send_dlms_req_and_next(make, parse, State::DATA_RECV);
 }
@@ -1079,9 +1087,11 @@ int DlmsCosemComponent::set_sensor_value(uint16_t class_id, const uint8_t *obis_
 
   std::string obis_str(obis_buf);
 
-  auto range = this->sensors_.equal_range(obis_str);
+  // A push frame carries no attribute index, so the value goes to every sensor on this OBIS code.
+  auto range_begin = this->sensors_.lower_bound({obis_str, 0});
+  auto range_end = this->sensors_.upper_bound({obis_str, UINT8_MAX});
   int found_count = 0;
-  for (auto it = range.first; it != range.second; ++it) {
+  for (auto it = range_begin; it != range_end; ++it) {
     DlmsCosemSensorBase *sensor = it->second;
     if (!sensor->shall_we_publish()) {
       continue;
@@ -1119,6 +1129,48 @@ int DlmsCosemComponent::set_sensor_value(uint16_t class_id, const uint8_t *obis_
 
 #endif  // ENABLE_DLMS_COSEM_PUSH_MODE
 
+#ifndef DLMS_IGNORE_LIMITER
+// The thresholds are dlmsVARIANTs that var_copy() may have allocated for. cosem_init() only
+// memsets the object, so they have to be released explicitly before the object is re-initialized.
+void DlmsCosemComponent::clear_limiter_() {
+  var_clear(&this->buffers_.gx_limiter.thresholdActive);
+  var_clear(&this->buffers_.gx_limiter.thresholdNormal);
+  var_clear(&this->buffers_.gx_limiter.thresholdEmergency);
+}
+
+static bool variant_as_float(dlmsVARIANT *variant, float &value_out) {
+  if (variant->vt == DLMS_DATA_TYPE_NONE) {
+    return false;
+  }
+  value_out = static_cast<float>(var_toDouble(variant));
+  return true;
+}
+
+bool DlmsCosemComponent::limiter_attribute_as_float_(uint8_t attribute, float &value_out) {
+  auto &limiter = this->buffers_.gx_limiter;
+  switch (attribute) {
+    case LIMITER_ATTR_THRESHOLD_ACTIVE:
+      // The threshold the meter is enforcing right now. Zero means the limiter is not limiting.
+      return variant_as_float(&limiter.thresholdActive, value_out);
+    case LIMITER_ATTR_THRESHOLD_NORMAL:
+      return variant_as_float(&limiter.thresholdNormal, value_out);
+    case LIMITER_ATTR_THRESHOLD_EMERGENCY:
+      return variant_as_float(&limiter.thresholdEmergency, value_out);
+    case LIMITER_ATTR_MIN_OVER_THRESHOLD_DURATION:
+      value_out = static_cast<float>(limiter.minOverThresholdDuration);
+      return true;
+    case LIMITER_ATTR_MIN_UNDER_THRESHOLD_DURATION:
+      value_out = static_cast<float>(limiter.minUnderThresholdDuration);
+      return true;
+    case LIMITER_ATTR_EMERGENCY_PROFILE_ACTIVE:
+      value_out = limiter.emergencyProfileActive ? 1.0f : 0.0f;
+      return true;
+    default:
+      return false;
+  }
+}
+#endif  // DLMS_IGNORE_LIMITER
+
 int DlmsCosemComponent::set_sensor_scale_and_unit(DlmsCosemSensor *sensor) {
   ESP_LOGD(TAG, "set_sensor_scale_and_unit");
   if (!buffers_.reply.complete)
@@ -1143,8 +1195,8 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
   }
 
   auto vt = buffers_.reply.dataType;
-  auto object_class = sensor->get_obis_class();
-  ESP_LOGD(TAG, "Class: %d, OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", object_class, obis,
+  auto obis_class = sensor->get_obis_class();
+  ESP_LOGD(TAG, "Class: %d, OBIS code: %s, DLMS_DATA_TYPE: %s (%d)", obis_class, obis,
            LOG_STR_ARG(dlms_data_type_to_string(vt)), vt);
 
   //      if (cosem_rr_.result().has_value()) {
@@ -1153,8 +1205,8 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 
 #ifdef USE_SENSOR
     if (sensor->get_type() == SensorType::SENSOR) {
-      if ((object_class == DLMS_OBJECT_TYPE_DATA) || (object_class == DLMS_OBJECT_TYPE_REGISTER) ||
-          (object_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
+      if ((obis_class == DLMS_OBJECT_TYPE_DATA) || (obis_class == DLMS_OBJECT_TYPE_REGISTER) ||
+          (obis_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
         auto var = &this->buffers_.gx_register.value;
         auto scale = static_cast<DlmsCosemSensor *>(sensor)->get_scale();
         auto unit = static_cast<DlmsCosemSensor *>(sensor)->get_unit();
@@ -1163,16 +1215,27 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
           ESP_LOGD(TAG, "OBIS code: %s, Value: %f, Scale: %f, Unit: %s", obis, val, scale, unit);
           static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
         }
+#ifndef DLMS_IGNORE_LIMITER
+      } else if (obis_class == DLMS_OBJECT_TYPE_LIMITER) {
+        float val = NAN;
+        if (this->limiter_attribute_as_float_(this->buffers_.gx_attribute, val)) {
+          ESP_LOGD(TAG, "OBIS code: %s, Limiter attribute %d, Value: %f", obis, this->buffers_.gx_attribute, val);
+          static_cast<DlmsCosemSensor *>(sensor)->set_value(val);
+        } else {
+          ESP_LOGW(TAG, "Limiter attribute %d carries no readable value for OBIS %s", this->buffers_.gx_attribute,
+                   obis);
+        }
+#endif
       } else {
-        ESP_LOGW(TAG, "Wrong OBIS class. Regular numberic sensors can only "
-                      "handle Data (class 1), Registers (class = 3) and Extended Registers (class = 4)");
+        ESP_LOGW(TAG, "Wrong OBIS class. Regular numberic sensors can only handle Data (class 1), Registers "
+                      "(class = 3), Extended Registers (class = 4) and Limiter (class = 71)");
       }
     }
 #endif  // USE_SENSOR
 
 #ifdef USE_TEXT_SENSOR
     if (sensor->get_type() == SensorType::TEXT_SENSOR) {
-      if (object_class == DLMS_OBJECT_TYPE_CLOCK) {
+      if (obis_class == DLMS_OBJECT_TYPE_CLOCK) {
         static char obis_datetime_str[32];
         auto clock_gx_time = &this->buffers_.gx_clock.time;
         auto dt = clock_gx_time->value;
@@ -1185,6 +1248,27 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
         static_cast<DlmsCosemTextSensor *>(sensor)->set_value(obis_datetime_str, this->cp1251_conversion_required_);
         return this->dlms_reading_state_.last_error;
       }
+
+#ifndef DLMS_IGNORE_LIMITER
+      if (obis_class == DLMS_OBJECT_TYPE_LIMITER) {
+        float val = NAN;
+        if (!this->limiter_attribute_as_float_(this->buffers_.gx_attribute, val)) {
+          ESP_LOGW(TAG, "Limiter attribute %d carries no readable value for OBIS %s", this->buffers_.gx_attribute,
+                   obis);
+          return this->dlms_reading_state_.last_error;
+        }
+        char limiter_str[24];
+        if (this->buffers_.gx_attribute == LIMITER_ATTR_EMERGENCY_PROFILE_ACTIVE) {
+          snprintf(limiter_str, sizeof(limiter_str), "%s", val != 0.0f ? "true" : "false");
+        } else {
+          snprintf(limiter_str, sizeof(limiter_str), "%g", val);
+        }
+        ESP_LOGD(TAG, "OBIS code: %s, Limiter attribute %d: %s", obis, this->buffers_.gx_attribute, limiter_str);
+        // Plain ASCII, nothing for the cp1251 converter to do.
+        static_cast<DlmsCosemTextSensor *>(sensor)->set_value(limiter_str, false);
+        return this->dlms_reading_state_.last_error;
+      }
+#endif
 
       //
       // this section is made to avoid memory leaks found in gurux library after cl_updateValue for non-numerics
@@ -1208,16 +1292,20 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
         ESP_LOGD(TAG, "data size=%d", raw_len);
         ESP_LOGV(TAG, "DATA: %s", format_hex_pretty(raw_ptr, raw_len).c_str());
 
-        if ((object_class == DLMS_OBJECT_TYPE_DATA) || (object_class == DLMS_OBJECT_TYPE_REGISTER) ||
-            (object_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
+        if ((obis_class == DLMS_OBJECT_TYPE_DATA) || (obis_class == DLMS_OBJECT_TYPE_REGISTER) ||
+            (obis_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
           auto data_as_string =
               dlms_data_as_string(vt, raw_ptr, raw_len > UINT8_MAX ? UINT8_MAX : static_cast<uint8_t>(raw_len));
           static_cast<DlmsCosemTextSensor *>(sensor)->set_value(data_as_string.c_str(),
                                                                 this->cp1251_conversion_required_);
-          ESP_LOGV(TAG, "DATA AS STRING: ""%s""", data_as_string.c_str());
+          ESP_LOGV(TAG,
+                   "DATA AS STRING: "
+                   "%s"
+                   "",
+                   data_as_string.c_str());
         } else {
           ESP_LOGW(TAG, "Wrong OBIS class. We can only handle Data (class 1), Registers (class = 3), Extended "
-                        "Registers (class = 4), and Clock (class = 8) for text sensors.");
+                        "Registers (class = 4), Clock (class = 8) and Limiter (class = 71) for text sensors.");
         }
       }
     }

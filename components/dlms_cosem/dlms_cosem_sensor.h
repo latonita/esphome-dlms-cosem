@@ -32,6 +32,11 @@ class DlmsCosemSensorBase {
   void set_obis_class(int obis_class) { this->obis_class_ = obis_class; }
   int get_obis_class() { return this->obis_class_; }
 
+  // COSEM attribute index to read. It is 2 (the value) for the classes we normally poll, but the
+  // Limiter (class 71) keeps its thresholds and its active flag in separate attributes.
+  void set_attribute(uint8_t attribute) { this->attribute_ = attribute; }
+  uint8_t get_attribute() const { return this->attribute_; }
+
   void reset() {
     has_value_ = false;
     tries_ = 0;
@@ -54,6 +59,7 @@ class DlmsCosemSensorBase {
  protected:
   std::string obis_code_;
   int obis_class_{3 /*DLMS_OBJECT_TYPE_REGISTER*/};
+  uint8_t attribute_{2};
   bool has_value_{false};
   bool fresh_{false};
   uint8_t tries_{0};

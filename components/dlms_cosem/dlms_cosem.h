@@ -36,7 +36,29 @@ static const size_t DEFAULT_IN_BUF_SIZE = 256;
 static const size_t DEFAULT_IN_BUF_SIZE_PUSH = 2048;
 static const size_t MAX_OUT_BUF_SIZE = 128;
 
-using SensorMap = std::multimap<std::string, DlmsCosemSensorBase *>;
+// COSEM interface class 71 (Limiter) attribute indexes we can expose as sensors. Attribute 2
+// (monitored_value) and 8/9/11 are compound types and are deliberately left out.
+static constexpr uint8_t LIMITER_ATTR_THRESHOLD_ACTIVE = 3;
+static constexpr uint8_t LIMITER_ATTR_THRESHOLD_NORMAL = 4;
+static constexpr uint8_t LIMITER_ATTR_THRESHOLD_EMERGENCY = 5;
+static constexpr uint8_t LIMITER_ATTR_MIN_OVER_THRESHOLD_DURATION = 6;
+static constexpr uint8_t LIMITER_ATTR_MIN_UNDER_THRESHOLD_DURATION = 7;
+static constexpr uint8_t LIMITER_ATTR_EMERGENCY_PROFILE_ACTIVE = 10;
+
+// A reading is identified by its OBIS code *and* the COSEM attribute index: the Limiter exposes
+// several values worth reading on a single logical name, so the OBIS code alone cannot tell two
+// sensors apart.
+struct SensorKey {
+  std::string obis_code;
+  uint8_t attribute;
+
+  bool operator<(const SensorKey &other) const {
+    int cmp = this->obis_code.compare(other.obis_code);
+    return cmp != 0 ? cmp < 0 : this->attribute < other.attribute;
+  }
+};
+
+using SensorMap = std::multimap<SensorKey, DlmsCosemSensorBase *>;
 
 using FrameStopFunction = std::function<bool(uint8_t *buf, size_t size)>;
 using ReadFunction = std::function<size_t()>;
@@ -170,8 +192,8 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   void prepare_and_send_dlms_buffers();
   void prepare_and_send_dlms_aarq();
   void prepare_and_send_dlms_auth();
-  void prepare_and_send_dlms_data_unit_request(const char *obis, int type);
-  void prepare_and_send_dlms_data_request(const char *obis, int type, bool reg_init = true,
+  void prepare_and_send_dlms_data_unit_request(const char *obis, int obis_class);
+  void prepare_and_send_dlms_data_request(const char *obis, int obis_class, bool reg_init = true,
                                           bool skip_gurux_value_update = false);
   void prepare_and_send_dlms_release();
   void prepare_and_send_dlms_disconnect();
@@ -207,6 +229,13 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
   int set_sensor_scale_and_unit(DlmsCosemSensor *sensor);
   int set_sensor_value(DlmsCosemSensorBase *sensor, const char *obis);
+
+#ifndef DLMS_IGNORE_LIMITER
+  // The Limiter keeps every attribute in its own field, so a reply has to be picked out of the
+  // Gurux object by attribute index instead of read from one common value member.
+  bool limiter_attribute_as_float_(uint8_t attribute, float &value_out);
+  void clear_limiter_();
+#endif
 
 #ifdef ENABLE_DLMS_COSEM_PUSH_MODE
   int set_sensor_value(uint16_t class_id, const uint8_t *obis_code, DLMS_DATA_TYPE value_type,
@@ -274,6 +303,11 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
 
     gxRegister gx_register;
     gxClock gx_clock;
+#ifndef DLMS_IGNORE_LIMITER
+    // Zero-initialized: clear_limiter_() releases the threshold variants before every re-init,
+    // and it must not run over indeterminate memory on the first read.
+    gxLimiter gx_limiter{};
+#endif
     unsigned char gx_attribute{2};
 
   } buffers_;

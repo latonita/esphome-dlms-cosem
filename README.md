@@ -36,6 +36,7 @@ For ESP32/ESP8266 physical wiring examples see: https://github.com/latonita/esph
   - [Numeric sensor (sensor)](#numeric-sensor-sensor)
   - [Text sensor (text_sensor)](#text-sensor-text_sensor)
   - [Binary sensors (binary_sensor)](#binary-sensors-binary_sensor)
+- [Power limiter (COSEM class 71)](#power-limiter-cosem-class-71)
 - [Multiple meters](#multiple-meters)
 - [Meter specifics](#meter-specifics)
   - [Nartis I100-W112](#nartis-i100-w112)
@@ -55,6 +56,7 @@ For ESP32/ESP8266 physical wiring examples see: https://github.com/latonita/esph
 - Basic textual data (octet-string)
 - Major obis classes - 1 (Data), 2 (Register), 3 (Extended Register)
 - Clock obis class - 8 (Clocj) 
+- Limiter obis class - 71 (power limit threshold and whether it is in force)
 - Cyrillic (cp1251) decoding to UTF‑8 (Nartis I100-W112, RiM 489, …)
 - Logical & physical address specification
 - Multiple meters on one bus
@@ -225,6 +227,10 @@ sensor:
     device_class: current
     state_class: measurement
 ```
+- **obis_class** — COSEM interface class of the object. Default 3 (Register).
+- **attribute** — COSEM attribute index to read. Default 2, which holds the value for Data (1),
+  Register (3) and Extended Register (4). Change it only for objects that keep their values in other
+  attributes - see [Power limiter (COSEM class 71)](#power-limiter-cosem-class-71).
 
 ### Text sensor (`text_sensor`)
 ```yaml
@@ -237,6 +243,9 @@ text_sensor:
     entity_category: diagnostic
 ```
 - **cp1251** — per-sensor override. Useful for fields like `0.0.96.1.1.255`.
+- **obis_class** — default 1 (Data). Use 8 for Clock objects.
+- **attribute** — COSEM attribute index, default 2. See
+  [Power limiter (COSEM class 71)](#power-limiter-cosem-class-71).
 
 ### Binary sensors (`binary_sensor`)
 ```yaml
@@ -266,6 +275,71 @@ output:
     pin: GPIO04
     inverted: true
 ```
+
+---
+
+## Power limiter (COSEM class 71)
+
+The Limiter (COSEM interface class 71, usually `0.0.17.0.0.255`) holds the load limit the meter
+enforces. Unlike a Register, its value does not live in attribute 2, so the attribute has to be
+named explicitly with `attribute:`:
+
+| `attribute` | COSEM name | Meaning |
+| --- | --- | --- |
+| 3 | `threshold_active` | The threshold in force right now (read-only). Normally equal to `threshold_normal`, and to `threshold_emergency` while an emergency profile runs. |
+| 4 | `threshold_normal` | The configured normal limit. |
+| 5 | `threshold_emergency` | The limit used while an emergency profile is running. |
+| 6 | `min_over_threshold_duration` | Seconds over the threshold before the action fires. |
+| 7 | `min_under_threshold_duration` | Seconds under the threshold before the action fires. |
+| 10 | `emergency_profile_active` | `1`/`0` - whether an emergency profile is in force. |
+
+`attribute` defaults to 3 for `obis_class: 71`, and to 2 for every other class.
+
+```yaml
+sensor:
+  # What limit is configured
+  - platform: dlms_cosem
+    name: Power limit
+    obis_code: 0.0.17.0.0.255
+    obis_class: 71
+    attribute: 4           # threshold_normal
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+
+  # What limit the meter is enforcing right now
+  - platform: dlms_cosem
+    name: Power limit in force
+    obis_code: 0.0.17.0.0.255
+    obis_class: 71
+    attribute: 3           # threshold_active
+    unit_of_measurement: W
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 0
+```
+
+**Is the limiter in force?** There is no single "enabled" attribute. Compare `threshold_active` (3)
+against `threshold_normal` (4) and `threshold_emergency` (5) to see which one the meter is applying.
+A limiter that is switched off reads back as `0` on some meters and as the maximum value of the data
+type (e.g. `4294967295` for `double-long-unsigned`) on others - check your log once and filter
+accordingly.
+
+**Units.** The limiter has no scaler/unit attribute of its own: the threshold is expressed in the
+units of the register it monitors, named by attribute 2 (`monitored_value`) - commonly
+`{3, 1-0:90.7.0.255, 2}` or `{3, 1-0:1.24.0.255, 2}`. Adding an ordinary sensor for that OBIS code
+with `obis_class: 3` makes the component fetch its scaler and unit and print them to the log, which
+tells you how the threshold has to be scaled. Then set `unit_of_measurement` yourself and use
+`multiplier` if needed (e.g. `multiplier: 0.001` for a threshold given in watts but wanted in kW).
+
+**Access rights.** On many meters the whole Limiter object is readable only by the highest-privilege
+client - an access-rights column reading `-/-/G` for clients `16/102/1` means only client 1 may get
+it. The hub defaults to `client_address: 16`, so if limiter reads come back as access-denied, raise
+`client_address` and supply the matching `password`.
+
+A limiter attribute can also be read as a `text_sensor`; `attribute: 10` then publishes
+`true`/`false` instead of `1`/`0`.
 
 ---
 

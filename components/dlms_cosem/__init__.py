@@ -37,6 +37,22 @@ CONF_ADDRESS_LENGTH = "address_length"
 CONF_DELAY_BETWEEN_REQUESTS = "delay_between_requests"
 CONF_DONT_PUBLISH = "dont_publish"
 CONF_CP1251 = "cp1251"
+CONF_ATTRIBUTE = "attribute"
+
+# COSEM interface class 71 (Limiter). Unlike Data/Register/Clock, the values worth reading are not
+# in attribute 2 (that one is the monitored_value structure) but in the thresholds and the
+# emergency-profile flag listed below.
+OBIS_CLASS_LIMITER = 71
+LIMITER_ATTRIBUTES = {
+    3: "threshold_active",
+    4: "threshold_normal",
+    5: "threshold_emergency",
+    6: "min_over_threshold_duration",
+    7: "min_under_threshold_duration",
+    10: "emergency_profile_active",
+}
+DEFAULT_ATTRIBUTE = 2
+DEFAULT_LIMITER_ATTRIBUTE = 3
 
 CONF_PUSH_MODE = "push_mode"
 CONF_PUSH_SHOW_LOG = "push_show_log"
@@ -78,6 +94,25 @@ def obis_code(value):
     # Normalize to dot-separated format
     normalized = re.sub(r'[.\-:*]', '.', value)
     return normalized
+
+
+def validate_attribute(config):
+    """Pick the default COSEM attribute for the object class and reject unreadable ones."""
+    obis_class = config[CONF_OBIS_CLASS]
+    if CONF_ATTRIBUTE not in config:
+        config[CONF_ATTRIBUTE] = (
+            DEFAULT_LIMITER_ATTRIBUTE
+            if obis_class == OBIS_CLASS_LIMITER
+            else DEFAULT_ATTRIBUTE
+        )
+    attribute = config[CONF_ATTRIBUTE]
+    if obis_class == OBIS_CLASS_LIMITER and attribute not in LIMITER_ATTRIBUTES:
+        readable = ", ".join(f"{k} ({v})" for k, v in LIMITER_ATTRIBUTES.items())
+        raise cv.Invalid(
+            f"Attribute {attribute} of the Limiter (obis_class {OBIS_CLASS_LIMITER}) cannot be "
+            f"read as a sensor. Use one of: {readable}"
+        )
+    return config
 
 
 def validate_meter_address(value):
