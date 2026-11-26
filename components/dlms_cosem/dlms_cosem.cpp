@@ -4,6 +4,7 @@
 #include "esphome/core/application.h"
 #include "esphome/core/helpers.h"
 #include "esphome/core/log.h"
+#include <algorithm>
 #include <cinttypes>
 #ifdef USE_ESP_IDF
 #include <esp_heap_caps.h>
@@ -14,7 +15,7 @@
 namespace esphome {
 namespace dlms_cosem {
 
-static const char *TAG0 = "dlms_cosem_";
+static constexpr char TAG0[] = "dlms_cosem_";
 
 #define TAG (this->tag_.c_str())
 
@@ -1081,7 +1082,7 @@ int DlmsCosemComponent::set_sensor_value(DlmsCosemSensorBase *sensor, const char
 
       if (raw_ptr != nullptr && raw_len > 0) {
         ESP_LOGD(TAG, "data size=%d", raw_len);
-        ESP_LOGV(TAG, "DATA: %s", format_hex_pretty(raw_ptr, raw_len).c_str());
+        this->log_hex_("DATA", raw_ptr, raw_len);
 
         if ((object_class == DLMS_OBJECT_TYPE_DATA) || (object_class == DLMS_OBJECT_TYPE_REGISTER) ||
             (object_class == DLMS_OBJECT_TYPE_EXTENDED_REGISTER)) {
@@ -1143,7 +1144,7 @@ void DlmsCosemComponent::send_dlms_messages_() {
     if (this->flow_control_pin_ != nullptr)
       this->flow_control_pin_->digital_write(false);
 
-    ESP_LOGVV(TAG, "TX: %s", format_hex_pretty(buffer->data + buffers_.out_msg_data_pos, bytes_to_send).c_str());
+    this->log_hex_("TX", buffer->data + buffers_.out_msg_data_pos, bytes_to_send);
 
     this->update_last_rx_time_();
     buffers_.out_msg_data_pos += bytes_to_send;
@@ -1183,7 +1184,7 @@ size_t DlmsCosemComponent::receive_frame_(FrameStopFunction stop_fn) {
       //      ESP_LOGVV(TAG, "RX: %s",
       //      format_frame_pretty(this->buffers_.in.data,
       //      this->buffers_.in.size).c_str());
-      ESP_LOGVV(TAG, "RX: %s", format_hex_pretty(this->buffers_.in.data, this->buffers_.in.size).c_str());
+      this->log_hex_("RX", this->buffers_.in.data, this->buffers_.in.size);
       ret_val = this->buffers_.in.size;
 
       // this->buffers_.amount_in = 0;
@@ -1336,7 +1337,25 @@ void DlmsCosemComponent::unlock_uart_session_() {
 
 uint8_t DlmsCosemComponent::next_obj_id_ = 0;
 
-std::string DlmsCosemComponent::generateTag() { return str_sprintf("%s%03d", TAG0, ++next_obj_id_); }
+std::string DlmsCosemComponent::generateTag() {
+  // %03d of uint8_t is at most 3 digits; sizeof(TAG0) includes the trailing NUL.
+  char buf[sizeof(TAG0) + 3];
+  buf_append_printf(buf, sizeof(buf), 0, "%s%03d", TAG0, ++next_obj_id_);
+  return buf;
+}
+
+// Hex dump at VERY_VERBOSE, split into short lines: keeps the stack buffer small
+// and stays under the logger's line length limit.
+void DlmsCosemComponent::log_hex_(const char *dir, const uint8_t *data, size_t len) {
+#if ESPHOME_LOG_LEVEL >= ESPHOME_LOG_LEVEL_VERY_VERBOSE
+  static constexpr size_t CHUNK = 32;
+  char hex_buf[format_hex_pretty_size(CHUNK)];
+  for (size_t off = 0; off < len; off += CHUNK) {
+    size_t n = std::min(CHUNK, len - off);
+    ESP_LOGVV(TAG, "%s[%u]: %s", dir, static_cast<unsigned>(off), format_hex_pretty_to(hex_buf, data + off, n, '.'));
+  }
+#endif
+}
 
 }  // namespace dlms_cosem
 }  // namespace esphome
