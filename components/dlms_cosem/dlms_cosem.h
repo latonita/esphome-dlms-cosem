@@ -330,6 +330,7 @@ class DlmsCosemComponent : public PollingComponent, public uart::UARTDevice {
   std::string tag_;
 
   static std::string generateTag();
+  void log_hex_(const char *dir, const uint8_t *data, size_t len);
 };
 
 }  // namespace dlms_cosem
