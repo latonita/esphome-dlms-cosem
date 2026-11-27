@@ -80,6 +80,8 @@ external_components:
 
 A configured UART (RS‑485 adapter) or optical head is required.
 
+ESPHome 2026.2 or newer is required. ESPHome 2026.11 and newer need component version 2026.11.0 or newer (older versions do not compile).
+
 ---
 
 ## Quick Start
